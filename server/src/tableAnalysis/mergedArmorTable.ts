@@ -9,10 +9,22 @@ import {
   ResolvedFile,
 } from "../modResolution/resolver";
 
+/** Where a merged value actually came from - enough to build an LSP go-to-definition Location, loose file or inside a VP. */
+export interface SourceLocation {
+  resolved: ResolvedFile;
+  line: number;
+}
+
+export interface EffectiveDamageType {
+  damageType: string;
+  location: SourceLocation;
+}
+
 export interface EffectiveArmorEntry {
   name: string;
-  /** Unique damage-type strings referenced by this armor type's `+Damage Type:` entries. */
-  damageTypes: string[];
+  nameLocation: SourceLocation | null;
+  /** Unique damage-type entries referenced by this armor type's `$Damage Type:` fields, each with where it was set. */
+  damageTypes: EffectiveDamageType[];
   layerSources: string[];
 }
 
@@ -45,15 +57,46 @@ export function buildEffectiveArmorTable(searchDirs: string[]): Map<string, Effe
   return result;
 }
 
-/** All unique damage-type strings (lowercased) referenced anywhere across every armor type in the merged table. */
+/** All unique damage-type strings (lowercased) referenced anywhere across every armor type in the merged table - for existence checks. */
 export function collectAllDamageTypes(armorTable: Map<string, EffectiveArmorEntry>): Set<string> {
   const all = new Set<string>();
   for (const entry of armorTable.values()) {
     for (const dt of entry.damageTypes) {
-      all.add(dt.toLowerCase());
+      all.add(dt.damageType.toLowerCase());
     }
   }
   return all;
+}
+
+/** Unique damage-type strings in their original (first-seen) casing - for completion display, where lowercasing would look wrong. */
+export function collectDisplayDamageTypes(armorTable: Map<string, EffectiveArmorEntry>): string[] {
+  const seen = new Map<string, string>();
+  for (const entry of armorTable.values()) {
+    for (const dt of entry.damageTypes) {
+      const key = dt.damageType.toLowerCase();
+      if (!seen.has(key)) {
+        seen.set(key, dt.damageType);
+      }
+    }
+  }
+  return Array.from(seen.values());
+}
+
+/** Every location (across every armor type) where `damageType` is set via `$Damage Type:`. */
+export function findDamageTypeLocations(
+  armorTable: Map<string, EffectiveArmorEntry>,
+  damageType: string,
+): SourceLocation[] {
+  const target = damageType.toLowerCase();
+  const locations: SourceLocation[] = [];
+  for (const entry of armorTable.values()) {
+    for (const dt of entry.damageTypes) {
+      if (dt.damageType.toLowerCase() === target) {
+        locations.push(dt.location);
+      }
+    }
+  }
+  return locations;
 }
 
 function applyLayer(result: Map<string, EffectiveArmorEntry>, resolved: ResolvedFile, isBase: boolean): void {
@@ -81,9 +124,13 @@ function applyLayer(result: Map<string, EffectiveArmorEntry>, resolved: Resolved
       continue;
     }
 
-    const merged: EffectiveArmorEntry = existing ?? { name: entry.name, damageTypes: [], layerSources: [] };
+    const merged: EffectiveArmorEntry = existing ?? { name: entry.name, nameLocation: null, damageTypes: [], layerSources: [] };
+    merged.nameLocation = { resolved, line: entry.nameLine };
     if (entry.damageTypes.length > 0) {
-      merged.damageTypes = entry.damageTypes.map((d) => d.damageType);
+      merged.damageTypes = entry.damageTypes.map((d) => ({
+        damageType: d.damageType,
+        location: { resolved, line: d.line },
+      }));
     }
     merged.layerSources = [...merged.layerSources, sourceLabel];
 

@@ -397,6 +397,105 @@ suite("FSO Table Language Server", () => {
       assert.ok(childNames.includes(expected), `expected "${expected}" in the outline, got: ${JSON.stringify(childNames)}`);
     }
   });
+
+  test("completes a ship's $Armor Type: value from armor.tbl's entry names", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const armorLine = lines.findIndex((l) => l.includes("$Armor Type: Standard"));
+    assert.ok(armorLine >= 0, "fixture must contain a $Armor Type: Standard line (GTF Apollo)");
+
+    const list = (await vscode.commands.executeCommand(
+      "vscode.executeCompletionItemProvider",
+      uri,
+      new vscode.Position(armorLine, lines[armorLine].length),
+    )) as vscode.CompletionList;
+    const labels = list.items.map((i) => (typeof i.label === "string" ? i.label : i.label.label));
+    assert.ok(labels.includes("Standard"), `expected "Standard" among armor-type completions, got: ${JSON.stringify(labels)}`);
+  });
+
+  test("completes a weapon's $Damage Type: value from armor.tbl's referenced damage types", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/weapons.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const damageLine = lines.findIndex((l) => l.includes("$Damage Type: Laser"));
+    assert.ok(damageLine >= 0, "fixture must contain a $Damage Type: Laser line");
+
+    const list = (await vscode.commands.executeCommand(
+      "vscode.executeCompletionItemProvider",
+      uri,
+      new vscode.Position(damageLine, lines[damageLine].length),
+    )) as vscode.CompletionList;
+    const labels = list.items.map((i) => (typeof i.label === "string" ? i.label : i.label.label));
+    assert.ok(labels.includes("Laser"), `expected "Laser" among damage-type completions, got: ${JSON.stringify(labels)}`);
+    assert.ok(labels.includes("Flak"), `expected "Flak" among damage-type completions, got: ${JSON.stringify(labels)}`);
+  });
+
+  test("go-to-definition on a ship's $Armor Type: jumps to armor.tbl's matching $Name:", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const armorLine = lines.findIndex((l) => l.includes("$Armor Type: Standard"));
+    assert.ok(armorLine >= 0, "fixture must contain a $Armor Type: Standard line (GTF Apollo)");
+
+    const locations = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(armorLine, lines[armorLine].length - 2),
+    )) as vscode.Location[];
+    assert.ok(locations && locations.length > 0, "expected at least one definition location");
+    assert.ok(
+      locations[0].uri.fsPath.endsWith(path.join("data", "tables", "armor.tbl")),
+      `expected the definition to point at armor.tbl, got: ${locations[0].uri.toString()}`,
+    );
+    const armorTblText = fs.readFileSync(path.join(fixturesRoot, "data/tables/armor.tbl"), "utf8");
+    const expectedLine = armorTblText.split(/\r\n|\r|\n/).findIndex((l) => l.includes("$Name: Standard"));
+    assert.strictEqual(locations[0].range.start.line, expectedLine);
+  });
+
+  test("go-to-declaration on a weapon's $Damage Type: jumps to armor.tbl's matching $Damage Type: entries", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/weapons.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const damageLine = lines.findIndex((l) => l.includes("$Damage Type: Laser"));
+    assert.ok(damageLine >= 0, "fixture must contain a $Damage Type: Laser line");
+
+    const locations = (await vscode.commands.executeCommand(
+      "vscode.executeDeclarationProvider",
+      uri,
+      new vscode.Position(damageLine, lines[damageLine].length - 1),
+    )) as vscode.Location[];
+    assert.ok(locations && locations.length > 0, "expected at least one declaration location");
+    assert.ok(
+      locations.every((loc) => loc.uri.fsPath.endsWith(path.join("data", "tables", "armor.tbl"))),
+      `expected every declaration location to point at armor.tbl, got: ${JSON.stringify(locations.map((l) => l.uri.toString()))}`,
+    );
+  });
+
+  test("hover on a resolved texture shows its location, not just found/not-found", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const iconLine = lines.findIndex((l) => l.includes("$Ship_icon:"));
+    const hoverText = await getHoverText(uri, iconLine);
+    assert.ok(hoverText.includes("✓"), `expected a found checkmark, got: ${hoverText}`);
+    assert.ok(hoverText.includes("iconfighter04.dds"), `expected the resolved file path in hover, got: ${hoverText}`);
+  });
 });
 
 async function getHoverText(uri: vscode.Uri, line: number): Promise<string> {

@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { readVpIndex, isVpArchiveFilename } from "./vp/reader";
+import { ResolvedFile } from "./modResolution/resolver";
 
 /**
  * Directories FSO tables' bitmap/animation fields conventionally reference, relative
@@ -24,14 +25,24 @@ function bareName(filename: string): string | null {
 }
 
 /**
- * Builds the set of every known texture/animation base name (lowercased, no extension)
- * across the given search-path directories - loose files under each TEXTURE_DIRS entry,
- * plus matching entries inside every .vp/.vpc archive in each directory (some entries'
- * payload bytes may be LZ41-compressed inside a .vpc, but that doesn't matter here -
- * only the uncompressed directory/index is read, see vp-container-format memory).
+ * Builds a lookup of every known texture/animation base name (lowercased, no
+ * extension) to WHERE it was found - across the given search-path directories, loose
+ * files under each TEXTURE_DIRS entry, plus matching entries inside every .vp/.vpc
+ * archive in each directory (some entries' payload bytes may be LZ41-compressed inside
+ * a .vpc, but that doesn't matter here - only the uncompressed directory/index is
+ * read, see vp-container-format memory). First occurrence wins as directories/archives
+ * are visited in search-path priority order (loose before .vp/.vpc within a directory,
+ * matching resolveFile()'s own precedence) - so the recorded location for a name is the
+ * one that would actually win at runtime, useful for hover ("where is this texture
+ * actually coming from").
  */
-export function buildTextureIndex(searchDirs: string[]): Set<string> {
-  const names = new Set<string>();
+export function buildTextureIndex(searchDirs: string[]): Map<string, ResolvedFile> {
+  const index = new Map<string, ResolvedFile>();
+  const record = (name: string, resolved: ResolvedFile) => {
+    if (!index.has(name)) {
+      index.set(name, resolved);
+    }
+  };
 
   for (const dir of searchDirs) {
     for (const texDir of TEXTURE_DIRS) {
@@ -40,7 +51,7 @@ export function buildTextureIndex(searchDirs: string[]): Set<string> {
         for (const f of fs.readdirSync(fullDir)) {
           const name = bareName(f);
           if (name) {
-            names.add(name);
+            record(name, { kind: "loose", containerPath: path.join(fullDir, f) });
           }
         }
       } catch {
@@ -50,18 +61,22 @@ export function buildTextureIndex(searchDirs: string[]): Set<string> {
 
     let vpFiles: string[] = [];
     try {
-      vpFiles = fs.readdirSync(dir).filter((f) => isVpArchiveFilename(f));
+      vpFiles = fs
+        .readdirSync(dir)
+        .filter((f) => isVpArchiveFilename(f))
+        .sort((a, b) => a.localeCompare(b));
     } catch {
       vpFiles = [];
     }
     for (const vpFile of vpFiles) {
       try {
-        const archive = readVpIndex(path.join(dir, vpFile));
+        const vpPath = path.join(dir, vpFile);
+        const archive = readVpIndex(vpPath);
         for (const entry of archive.entries) {
           if (TEXTURE_DIRS.some((texDir) => entry.path.toLowerCase().startsWith(`${texDir.toLowerCase()}/`))) {
             const name = bareName(entry.path);
             if (name) {
-              names.add(name);
+              record(name, { kind: "vp", containerPath: vpPath, entryPath: entry.path });
             }
           }
         }
@@ -71,5 +86,5 @@ export function buildTextureIndex(searchDirs: string[]): Set<string> {
     }
   }
 
-  return names;
+  return index;
 }

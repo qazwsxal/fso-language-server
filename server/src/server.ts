@@ -1,4 +1,4 @@
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import {
   createConnection,
   TextDocuments,
@@ -16,6 +16,9 @@ import {
   DocumentSymbolParams,
   SymbolKind,
   Range,
+  Location,
+  DefinitionParams,
+  DeclarationParams,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { parseTable, ParseResult, ParseDiagnostic, TableSection } from "./parser";
@@ -25,11 +28,36 @@ import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef
 import { buildEffectiveShipTable, EffectiveShipEntry } from "./tableAnalysis/mergedShipTable";
 import { extractWeaponEntries, WeaponEntryInfo, WeaponTextureRef } from "./tableAnalysis/weaponEntries";
 import { buildEffectiveWeaponsTable, EffectiveWeaponEntry } from "./tableAnalysis/mergedWeaponsTable";
-import { buildEffectiveArmorTable, collectAllDamageTypes, EffectiveArmorEntry } from "./tableAnalysis/mergedArmorTable";
-import { buildSearchPath, resolveModelFile, clearVpIndexCache, clearSearchPathCache } from "./modResolution/resolver";
+import {
+  buildEffectiveArmorTable,
+  collectAllDamageTypes,
+  collectDisplayDamageTypes,
+  findDamageTypeLocations,
+  EffectiveArmorEntry,
+  SourceLocation,
+} from "./tableAnalysis/mergedArmorTable";
+import {
+  buildSearchPath,
+  resolveModelFile,
+  clearVpIndexCache,
+  clearSearchPathCache,
+  describeResolvedSource,
+  ResolvedFile,
+} from "./modResolution/resolver";
 import { loadPofCached, clearPofCache } from "./pofCache";
 import { PofModel } from "./pof/types";
 import { buildTextureIndex } from "./textureIndex";
+import { readVpIndex, readVpEntry } from "./vp/reader";
+
+/**
+ * Custom URI scheme for a definition target that lives inside a VP/VPC archive rather
+ * than as a loose file - there's no real filesystem path to point a `file://` URI at.
+ * The client (extension.ts) registers a TextDocumentContentProvider for this scheme
+ * that calls back into this server (via the `fso-lsp/readVpEntryText` request below) to
+ * fetch the decoded text; VSCode treats content-provider-backed documents as read-only
+ * by construction, which is exactly the "readonly copy" behavior wanted here.
+ */
+const VP_CONTENT_SCHEME = "fso-tbl-vp";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -48,9 +76,96 @@ connection.onInitialize((_params: InitializeParams): InitializeResult => {
       completionProvider: { triggerCharacters: ["$", "+", "@", "#"] },
       hoverProvider: true,
       documentSymbolProvider: true,
+      definitionProvider: true,
+      declarationProvider: true,
     },
   };
 });
+
+/**
+ * Lets the client's virtual-document content provider (for definition targets inside a
+ * VP/VPC archive) fetch decoded text without duplicating any VP-reading logic
+ * client-side - see extension.ts's registerTextDocumentContentProvider() for the scheme
+ * this backs.
+ */
+connection.onRequest("fso-lsp/readVpEntryText", ({ vpPath, entryPath }: { vpPath: string; entryPath: string }): string => {
+  const archive = readVpIndex(vpPath);
+  const entry = archive.entries.find((e) => e.path === entryPath);
+  if (!entry) {
+    return `; entry not found: ${entryPath} in ${vpPath}`;
+  }
+  return readVpEntry(vpPath, entry).toString("utf8");
+});
+
+/**
+ * Converts a SourceLocation (a resolved file/VP entry + line number, as tracked by the
+ * merged armor table) into an LSP Location the client can navigate to. A loose file
+ * gets a real `file://` URI (opens as a normal, editable file, even if outside the
+ * current workspace folder - exactly how "go to definition into a dependency" works in
+ * most tools). A VP-sourced entry gets the custom `fso-tbl-vp:` scheme instead, whose
+ * query string carries the archive path and whose path carries the entry path within
+ * it - the client's registered content provider decodes this back into the two pieces
+ * to fetch the text via the `fso-lsp/readVpEntryText` request above.
+ */
+function toDefinitionLocation(loc: SourceLocation): Location {
+  const range = { start: { line: loc.line, character: 0 }, end: { line: loc.line, character: 1000 } };
+  if (loc.resolved.kind === "loose") {
+    return { uri: pathToFileURL(loc.resolved.containerPath).toString(), range };
+  }
+  const entryPath = loc.resolved.entryPath ?? "";
+  const uri = `${VP_CONTENT_SCHEME}:/${entryPath}?vp=${encodeURIComponent(loc.resolved.containerPath)}`;
+  return { uri, range };
+}
+
+/**
+ * Go-to-definition/declaration: currently handles a ship's `$Armor Type:`/
+ * `$Shield Armor Type:` (-> the matching armor.tbl `$Name:` line) and a weapon's
+ * `$Damage Type:` (-> every armor.tbl `$Damage Type:` line that references it, since
+ * unlike a name there's no single "the" definition for a shared damage-type tag).
+ * Registered for both onDefinition and onDeclaration (see capabilities above) since
+ * there's no meaningful distinction between the two for this project's cross-references
+ * - a table value doesn't have separate "declared" vs "defined" locations.
+ */
+function findCrossReferenceDefinition(params: DefinitionParams | DeclarationParams): Location | Location[] | null {
+  const documentUri = params.textDocument.uri;
+  const line = params.position.line;
+
+  const ships = shipEntriesByUri.get(documentUri) ?? [];
+  for (const ship of ships) {
+    const isArmor = ship.armorTypeLine === line && ship.armorType;
+    const isShieldArmor = ship.shieldArmorTypeLine === line && ship.shieldArmorType;
+    if (!isArmor && !isShieldArmor) {
+      continue;
+    }
+    const value = (isArmor ? ship.armorType : ship.shieldArmorType) as string;
+    try {
+      const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+      const entry = getEffectiveArmorTable(searchDirs).get(value.toLowerCase());
+      return entry?.nameLocation ? toDefinitionLocation(entry.nameLocation) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const weapons = weaponEntriesByUri.get(documentUri) ?? [];
+  for (const weapon of weapons) {
+    if (weapon.damageTypeLine !== line || !weapon.damageType) {
+      continue;
+    }
+    try {
+      const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+      const locations = findDamageTypeLocations(getEffectiveArmorTable(searchDirs), weapon.damageType);
+      return locations.length > 0 ? locations.map(toDefinitionLocation) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+connection.onDefinition((params) => findCrossReferenceDefinition(params));
+connection.onDeclaration((params) => findCrossReferenceDefinition(params));
 
 documents.onDidChangeContent((change) => {
   validateAndPublish(change.document);
@@ -165,6 +280,22 @@ function resolvePofForShipEntry(documentUri: string, ship: ShipEntryInfo): PofMo
   }
 }
 
+/** Same resolution as resolvePofForShipEntry(), but returns where the POF actually came from rather than its parsed contents - for hover location display. */
+function resolvePofLocationForShipEntry(documentUri: string, ship: ShipEntryInfo): ResolvedFile | null {
+  try {
+    const filePath = fileURLToPath(documentUri);
+    const searchDirs = buildSearchPath(filePath);
+    const effective = getEffectiveShipTable(searchDirs).get(ship.name.toLowerCase());
+    const modelFile = effective?.modelFile ?? ship.modelFile;
+    if (!modelFile) {
+      return null;
+    }
+    return resolveModelFile(searchDirs, modelFile);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Cache of the merged/effective weapons.tbl view, mirroring effectiveShipTableCache.
  */
@@ -256,9 +387,9 @@ function getEffectiveArmorTable(searchDirs: string[]): Map<string, EffectiveArmo
  * joined search-path directory list - same cache-key convention as the merged-table
  * caches above.
  */
-const textureIndexCache = new Map<string, Set<string>>();
+const textureIndexCache = new Map<string, Map<string, ResolvedFile>>();
 
-function getTextureIndex(searchDirs: string[]): Set<string> {
+function getTextureIndex(searchDirs: string[]): Map<string, ResolvedFile> {
   const key = searchDirs.join("|");
   const cached = textureIndexCache.get(key);
   if (cached) {
@@ -270,7 +401,7 @@ function getTextureIndex(searchDirs: string[]): Set<string> {
 }
 
 /**
- * Sorted texture name list, cached separately from the raw index Set (getTextureIndex)
+ * Sorted texture name list, cached separately from the raw index (getTextureIndex)
  * since real mod stacks can have 10,000+ textures - re-sorting that on every completion
  * request (formerly done inline in the completion handler) was a real, measurable
  * slowdown reported against a large real install.
@@ -283,7 +414,7 @@ function getSortedTextureNames(searchDirs: string[]): string[] {
   if (cached) {
     return cached;
   }
-  const names = Array.from(getTextureIndex(searchDirs)).sort();
+  const names = Array.from(getTextureIndex(searchDirs).keys()).sort();
   textureNamesSortedCache.set(key, names);
   return names;
 }
@@ -434,7 +565,7 @@ function computeTextureDiagnostics(
     return [];
   }
 
-  let textures: Set<string> | null = null;
+  let textures: Map<string, ResolvedFile> | null = null;
   const diagnostics: ParseDiagnostic[] = [];
 
   for (const ref of allRefs) {
@@ -531,6 +662,7 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
   const textureFieldMatch = /^\s*[$+@]([A-Za-z_][A-Za-z0-9 _]*?)\s*:\s*\S*$/.exec(linePrefix);
   if (textureFieldMatch) {
     const fieldKey = textureFieldMatch[1].trim().toLowerCase();
+
     if (SHIP_TEXTURE_FIELD_KEYS.has(fieldKey) || WEAPON_TEXTURE_FIELD_KEYS.has(fieldKey)) {
       try {
         const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
@@ -539,6 +671,31 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
         return names.map((name) => ({
           label: name,
           kind: CompletionItemKind.File,
+          filterText: name,
+          textEdit: { range, newText: name },
+        }));
+      } catch {
+        return [];
+      }
+    }
+
+    // Cross-table completion: a ship's $Armor Type:/$Shield Armor Type: completes from
+    // armor.tbl's entry names; a weapon's $Damage Type: completes from every distinct
+    // damage-type string used anywhere in armor.tbl's $Damage Type: entries.
+    if (fieldKey === "armor type" || fieldKey === "shield armor type" || fieldKey === "damage type") {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const armorTable = getEffectiveArmorTable(searchDirs);
+        const range = computeLineValueRange(doc, params.position.line);
+        const names =
+          fieldKey === "damage type"
+            ? collectDisplayDamageTypes(armorTable).sort()
+            : Array.from(armorTable.values())
+                .map((e) => e.name)
+                .sort();
+        return names.map((name) => ({
+          label: name,
+          kind: CompletionItemKind.EnumMember,
           filterText: name,
           textEdit: { range, newText: name },
         }));
@@ -608,12 +765,12 @@ function findTextureHover(
   }
   try {
     const textures = getTextureIndex(buildSearchPath(fileURLToPath(documentUri)));
-    const found = textures.has(ref.value.toLowerCase());
+    const location = textures.get(ref.value.toLowerCase());
     return {
       contents: {
         kind: "markdown",
-        value: found
-          ? `**${ref.sigil}${ref.field}: ${ref.value}** ✓\n\nFound along the active mod's search path.`
+        value: location
+          ? `**${ref.sigil}${ref.field}: ${ref.value}** ✓\n\nFound at:\n\`${describeResolvedSource(location)}\``
           : `**${ref.sigil}${ref.field}: ${ref.value}** ⚠️\n\nNot found along the active mod's search path (data/maps, data/effects, data/hud, data/interface, data/cbanims).`,
       },
     };
@@ -671,14 +828,18 @@ connection.onHover((params): Hover | null => {
     }
     try {
       const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
-      const allDamageTypes = collectAllDamageTypes(getEffectiveArmorTable(searchDirs));
-      const found = allDamageTypes.has(weapon.damageType.toLowerCase());
+      const armorTable = getEffectiveArmorTable(searchDirs);
+      const locations = findDamageTypeLocations(armorTable, weapon.damageType);
+      const locationList = locations
+        .map((loc, i) => `${i + 1}. \`${describeResolvedSource(loc.resolved)}:${loc.line + 1}\``)
+        .join("\n");
       return {
         contents: {
           kind: "markdown",
-          value: found
-            ? `**$Damage Type: ${weapon.damageType}** ✓\n\nReferenced by at least one armor.tbl $Damage Type: entry.`
-            : `**$Damage Type: ${weapon.damageType}** ⚠️\n\nNot referenced by any armor.tbl $Damage Type: entry along the active mod's search path — this weapon gets no armor-specific multiplier.`,
+          value:
+            locations.length > 0
+              ? `**$Damage Type: ${weapon.damageType}** ✓\n\nReferenced by armor.tbl at:\n${locationList}`
+              : `**$Damage Type: ${weapon.damageType}** ⚠️\n\nNot referenced by any armor.tbl $Damage Type: entry along the active mod's search path — this weapon gets no armor-specific multiplier.`,
         },
       };
     } catch {
@@ -733,13 +894,14 @@ connection.onHover((params): Hover | null => {
       const label = isShield ? "$Shield Armor Type:" : "$Armor Type:";
       try {
         const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
-        const found = getEffectiveArmorTable(searchDirs).has((value as string).toLowerCase());
+        const entry = getEffectiveArmorTable(searchDirs).get((value as string).toLowerCase());
         return {
           contents: {
             kind: "markdown",
-            value: found
-              ? `**${label} ${value}** ✓\n\nFound in armor.tbl.`
-              : `**${label} ${value}** ⚠️\n\nNot found in armor.tbl along the active mod's search path.`,
+            value:
+              entry?.nameLocation
+                ? `**${label} ${value}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+                : `**${label} ${value}** ⚠️\n\nNot found in armor.tbl along the active mod's search path.`,
           },
         };
       } catch {
@@ -785,10 +947,12 @@ connection.onHover((params): Hover | null => {
         pof.turretGunBanks.find((b) => b.baseSubobject === match.submodelNumber) ??
         pof.turretMissileBanks.find((b) => b.baseSubobject === match.submodelNumber);
       const turretNote = turretBank ? `\n\nTurret bank: ${turretBank.firingPointCount} firing point(s)` : "";
+      const location = resolvePofLocationForShipEntry(params.textDocument.uri, ship);
+      const locationNote = location ? `\n\nModel resolved from:\n\`${describeResolvedSource(location)}\`` : "";
       return {
         contents: {
           kind: "markdown",
-          value: `**$Subsystem: ${subsystem.name}** ✓\n\nFound in \`${ship.modelFile}\` (submodel #${match.submodelNumber}).${match.properties ? `\n\nProperties: \`${match.properties}\`` : ""}${turretNote}`,
+          value: `**$Subsystem: ${subsystem.name}** ✓\n\nFound in \`${ship.modelFile}\` (submodel #${match.submodelNumber}).${match.properties ? `\n\nProperties: \`${match.properties}\`` : ""}${turretNote}${locationNote}`,
         },
       };
     }
