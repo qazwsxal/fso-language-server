@@ -7,15 +7,25 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Programming Languages"],
-  "activationEvents": ["onLanguage:fso-table"],
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:fso-table"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "fso-table",
-        "aliases": ["FSO Table", "fso-table"],
-        "extensions": [".tbl", ".tbm"],
+        "aliases": [
+          "FSO Table",
+          "fso-table"
+        ],
+        "extensions": [
+          ".tbl",
+          ".tbm"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -33,12 +43,14 @@
     "test": "node ./out/test/runTest.js"
   },
   "dependencies": {
+    "three": "^0.169.0",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
-    "@types/node": "^18.19.0",
     "@types/mocha": "^10.0.7",
+    "@types/node": "^18.19.0",
+    "@types/three": "^0.169.0",
+    "@types/vscode": "^1.85.0",
     "@vscode/test-electron": "^2.4.1",
     "mocha": "^10.7.3",
     "typescript": "^5.5.4"

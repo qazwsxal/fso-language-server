@@ -9,7 +9,7 @@
     "build": "node build.js",
     "watch": "node build.js --watch",
     "typecheck": "tsc -p server --noEmit && tsc -p client --noEmit",
-    "test": "npm run test --workspace=client"
+    "test": "npm run test --workspace=server && npm run test --workspace=client"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",

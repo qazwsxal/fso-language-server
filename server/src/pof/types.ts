@@ -4,6 +4,15 @@ export interface PofSubobject {
   /** The subsystem/submodel name that ships.tbl `$Subsystem:` entries reference. */
   name: string | null;
   properties: string | null;
+  /** Offset of this submodel's origin from its parent's origin (parent-space translation) - needed to place submodels correctly when rendering. */
+  offset: { x: number; y: number; z: number };
+  /**
+   * Raw BSP polygon-tree bytes for this submodel (the `bsp_data_size`-prefixed blob at
+   * the end of the SOBJ/OBJ2 chunk), kept as a zero-copy Buffer view for on-demand
+   * geometry decoding (see pof/geometry.ts) - null if this submodel has no geometry
+   * (bsp_data_size 0) or the trailing fields couldn't be located safely.
+   */
+  bspData: Buffer | null;
 }
 
 export interface PofDockPoint {
