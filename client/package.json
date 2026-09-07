@@ -1,0 +1,46 @@
+{
+  "name": "fso-lsp",
+  "displayName": "FSO Table Language Support",
+  "description": "Language support for FreeSpace Open (FSO) mod table files (.tbl / .tbm)",
+  "version": "0.0.1",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:fso-table"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "fso-table",
+        "aliases": ["FSO Table", "fso-table"],
+        "extensions": [".tbl", ".tbm"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "fso-table",
+        "scopeName": "source.fso-table",
+        "path": "./syntaxes/fso-table.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p . --noEmit",
+    "pretest": "node ../build.js && tsc -p ./tsconfig.test.json",
+    "test": "node ./out/test/runTest.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^18.19.0",
+    "@types/mocha": "^10.0.7",
+    "@vscode/test-electron": "^2.4.1",
+    "mocha": "^10.7.3",
+    "typescript": "^5.5.4"
+  }
+}

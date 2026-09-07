@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "FSO Table",
+  "scopeName": "source.fso-table",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#sections" },
+    { "include": "#fields" },
+    { "include": "#xstr" },
+    { "include": "#strings" },
+    { "include": "#numbers" }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.semicolon.fso-table",
+      "match": ";.*$"
+    },
+    "sections": {
+      "match": "^\\s*(#End)\\b|^\\s*(#[^\\n]+)",
+      "captures": {
+        "1": { "name": "keyword.control.end.fso-table" },
+        "2": { "name": "keyword.control.section.fso-table" }
+      }
+    },
+    "fields": {
+      "match": "^\\s*(\\$[^:\\n]+|\\+[^:\\n]+|@[^:\\n]+)(:)?",
+      "captures": {
+        "1": { "name": "variable.other.field.fso-table" },
+        "2": { "name": "punctuation.separator.key-value.fso-table" }
+      }
+    },
+    "xstr": {
+      "match": "\\bXSTR\\s*\\(",
+      "name": "support.function.xstr.fso-table"
+    },
+    "strings": {
+      "name": "string.quoted.double.fso-table",
+      "begin": "\"",
+      "end": "\""
+    },
+    "numbers": {
+      "match": "(?<![\\w.])-?\\d+(\\.\\d+)?(?![\\w.])",
+      "name": "constant.numeric.fso-table"
+    }
+  }
+}

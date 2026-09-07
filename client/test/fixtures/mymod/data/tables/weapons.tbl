@@ -1,0 +1,58 @@
+#Primary Weapons
+
+$Name: Subach HL-7
+$Short name: Subach
+$Damage Type: Laser
+@Laser Bitmap: railgun-bitmap
+
+$Name: @Subach HL-D
++nocreate
+	+Description:					XSTR("
+	Standard Issue
+	", -1 )
+$end_multi_text
+$Damage Type: Laser
+
+$Name: In Between Weapon
++nocreate
+$Damage Type: Laser
+
+$Name: Maul
+$Damage Type: Laser
+$Pspew:
+	+Count: 1
+	+Time: 28
+	+Vel: -0.03
+	+Radius: 0.40
+	+Life: 0.2
+	+Scale: 0.15
+	+Bitmap: Akheton_Particle
+
+$Name: Maul#swap
+$Damage Type: Laser
+
+$Name: Maul#child
+$Damage Type: Laser
+
+$Name: Shivan Heavy Laser
++nocreate
+	+Description:					XSTR("
+	Some far-later description block
+	", -1 )
+$end_multi_text
+$Damage Type: Laser
+
+#End
+
+#Secondary Weapons
+
+$Name: Tempest
+$Short name: Tempest
+$Model File: fighter01.pof
+$Damage Type: Plasma
+
+$Name: Ghost Missile
+$Short name: Ghost
+$Model File: does_not_exist.pof
+
+#End

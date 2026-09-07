@@ -1,0 +1,27 @@
+#SPECIES DEFS
+
+$Species_Name:	Terran
++nocreate
+$Countermeasure type: GTVA Fighter Flare
+
+$Species_Name:		UEF
+$Default IFF:		Friendly
+$FRED Color:		( 128, 0, 128 )
+$MiscAnims:
+	+Debris_Texture:	debris01a
+	+Shield_Hit_ani:	shieldhit01a
+$ThrustAnims:
+	+Pri_Normal: 		<none>
+	+Pri_Afterburn: 	<none>
+	+Sec_Normal: 		thruster02-04
+	+Sec_Afterburn:		piratethruster2
+	+Ter_Normal: 		thruster03-04
+	+Ter_Afterburn: 	thruster03-04a
+$ThrustGlows:
+   +Normal: 			thrusterglow04
+   +Afterburn: 			pirateburnerglow
+$AwacsMultiplier:	1.00
+$Countermeasure type: UEF Fighter Flare
+$Borrows Flyby Sounds from: Terran
+
+#End

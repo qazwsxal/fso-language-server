@@ -1,0 +1,117 @@
+import { TableSection } from "../parser";
+
+export interface WeaponTextureRef {
+  sigil: "$" | "+" | "@";
+  field: string;
+  line: number;
+  value: string;
+}
+
+export interface WeaponEntryInfo {
+  name: string;
+  nameLine: number;
+  /** Only meaningful for missile/bomb-type weapons - primaries (lasers) typically have no model. Field is `$Model file:` (confirmed against weapons.cpp) - distinct from ships.tbl's `$POF file:`. */
+  modelFile: string | null;
+  modelFileLine: number | null;
+  /** References a damage-type string used in one or more armor.tbl `$Damage Type:` entries. */
+  damageType: string | null;
+  damageTypeLine: number | null;
+  /** Bitmap/animation-referencing fields, confirmed against weapons.cpp's field list and a real weapons.tbl. */
+  textureRefs: WeaponTextureRef[];
+  /** Modular-table-only sentinels (see fso-table-format): only relevant when merging .tbm layers. */
+  noCreate: boolean;
+  remove: boolean;
+}
+
+/** Top-level `$Field:` texture references. */
+const DOLLAR_TEXTURE_FIELDS = new Set(["hud image", "icon", "anim"]);
+/** `+Subfield:` texture references. */
+const PLUS_TEXTURE_FIELDS = new Set(["tech anim"]);
+/**
+ * `@Field:` texture references - `@` is a real third sigil confirmed in a real
+ * weapons.tbl (the laser-visual cluster: `@Laser Bitmap:`, `@Laser Glow:`, plus
+ * non-texture siblings `@Laser Color:`/`@Laser Color2:`/`@Laser Length:`/`@Laser Head
+ * Radius:`/`@Laser Tail Radius:` which aren't texture fields at all). An earlier
+ * mechanical extraction from weapons.cpp misread this as "$Laser Bitmap: (uses @
+ * prefix on the value)" - it's actually the field's own sigil, not a value prefix.
+ */
+const AT_TEXTURE_FIELDS = new Set(["laser bitmap", "laser glow"]);
+
+/** Extracts per-weapon model-file info from a parsed weapons.tbl/*-wep.tbm. */
+export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[] {
+  const entries: WeaponEntryInfo[] = [];
+  let current: WeaponEntryInfo | null = null;
+
+  for (const section of sections) {
+    const sectionName = section.name.trim().toLowerCase();
+    if (sectionName !== "primary weapons" && sectionName !== "secondary weapons") {
+      continue;
+    }
+
+    for (const field of section.entries) {
+      const key = field.key.trim().toLowerCase();
+
+      if (field.sigil === "$" && key === "name") {
+        current = {
+          name: field.value.trim(),
+          nameLine: field.line,
+          modelFile: null,
+          modelFileLine: null,
+          damageType: null,
+          damageTypeLine: null,
+          textureRefs: [],
+          noCreate: false,
+          remove: false,
+        };
+        entries.push(current);
+        continue;
+      }
+      if (!current) {
+        continue;
+      }
+
+      if (field.sigil === "+") {
+        if (key === "nocreate") {
+          current.noCreate = true;
+        } else if (key === "remove") {
+          current.remove = true;
+        } else if (PLUS_TEXTURE_FIELDS.has(key) && field.value.trim()) {
+          current.textureRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
+        }
+        continue;
+      }
+
+      if (field.sigil === "@") {
+        if (AT_TEXTURE_FIELDS.has(key) && field.value.trim()) {
+          current.textureRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
+        }
+        continue;
+      }
+
+      if (key === "model file") {
+        current.modelFile = field.value.trim();
+        current.modelFileLine = field.line;
+      } else if (key === "damage type") {
+        current.damageType = field.value.trim();
+        current.damageTypeLine = field.line;
+      } else if (DOLLAR_TEXTURE_FIELDS.has(key) && field.value.trim()) {
+        current.textureRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
+      }
+    }
+  }
+
+  return entries;
+}
+
+/** The weapon entry whose `$Name:` most recently precedes `line` (entries are in document order). */
+export function findCurrentWeaponEntry(entries: WeaponEntryInfo[], line: number): WeaponEntryInfo | null {
+  let candidate: WeaponEntryInfo | null = null;
+  for (const entry of entries) {
+    if (entry.nameLine <= line) {
+      candidate = entry;
+    } else {
+      break;
+    }
+  }
+  return candidate;
+}

@@ -1,0 +1,11 @@
+#Armor Type
+
+$Name: Standard
+$Damage Type: Laser
+	+Calculation: Multiplicative
+	+Value: 1.0
+$Damage Type: Flak
+	+Calculation: Multiplicative
+	+Value: 0.5
+
+#End
