@@ -55,17 +55,40 @@ const clientConfig = {
   plugins: [watchLogger("client")],
 };
 
+/**
+ * The 3D POF viewer's webview content script (client/src/webview/pofViewerMain.ts).
+ * Bundled separately from the extension itself since it runs in a completely
+ * different environment (a sandboxed browser context inside a VSCode webview, not the
+ * Node extension host) - `platform: "browser"` avoids pulling in any Node built-ins,
+ * and `format: "iife"` produces a plain <script>-loadable bundle since a webview has
+ * no module loader of its own. three.js (including its OrbitControls example module)
+ * is bundled in directly rather than fetched at runtime - a webview's CSP only allows
+ * scripts from resources the extension host explicitly grants via asWebviewUri(), so
+ * a CDN `<script src>` would be silently blocked.
+ */
+const webviewConfig = {
+  entryPoints: [path.join(__dirname, "client/src/webview/pofViewerMain.ts")],
+  outfile: path.join(__dirname, "client/dist/pofViewerWebview.js"),
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  sourcemap: true,
+  target: "es2020",
+  plugins: [watchLogger("pofViewerWebview")],
+};
+
 async function main() {
   if (isWatch) {
-    const [serverCtx, clientCtx] = await Promise.all([
+    const [serverCtx, clientCtx, webviewCtx] = await Promise.all([
       esbuild.context(serverConfig),
       esbuild.context(clientConfig),
+      esbuild.context(webviewConfig),
     ]);
-    await Promise.all([serverCtx.watch(), clientCtx.watch()]);
+    await Promise.all([serverCtx.watch(), clientCtx.watch(), webviewCtx.watch()]);
     console.log("esbuild watching server + client for changes...");
   } else {
-    await Promise.all([esbuild.build(serverConfig), esbuild.build(clientConfig)]);
-    console.log("esbuild build complete: client/dist/{extension,server}.js");
+    await Promise.all([esbuild.build(serverConfig), esbuild.build(clientConfig), esbuild.build(webviewConfig)]);
+    console.log("esbuild build complete: client/dist/{extension,server,pofViewerWebview}.js");
   }
 }
 

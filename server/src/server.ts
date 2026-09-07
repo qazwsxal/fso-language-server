@@ -46,6 +46,7 @@ import {
 } from "./modResolution/resolver";
 import { loadPofCached, clearPofCache } from "./pofCache";
 import { PofModel } from "./pof/types";
+import { decodeSubmodelGeometry } from "./pof/geometry";
 import { buildTextureIndex } from "./textureIndex";
 import { readVpIndex, readVpEntry } from "./vp/reader";
 
@@ -1066,6 +1067,74 @@ function lineSpanRange(lines: string[], startLine: number, endLine: number): Ran
     end: { line: endLine, character: (lines[endLine] ?? "").length },
   };
 }
+
+/** One submodel's decoded geometry plus the parent-relative info needed to place/highlight it, as sent to the client for the 3D viewer webview. */
+interface SubmodelGeometryPayload {
+  name: string;
+  /** Index into the returned `submodels` array, or -1 if this is a root submodel. */
+  parentIndex: number;
+  offset: [number, number, number];
+  positions: number[];
+  normals: number[];
+  uvs: number[];
+  indices: number[];
+}
+
+interface PofGeometryForSubsystemResult {
+  modelFile: string;
+  /** Index into `submodels` matching the requested `$Subsystem:` name (case-insensitive), or -1 if no submodel name matched. */
+  targetSubmodelIndex: number;
+  submodels: SubmodelGeometryPayload[];
+}
+
+/**
+ * Given a document URI + line, finds the ship `$Subsystem:` entry at that exact line
+ * (mirrors the subsystem-hover lookup above), resolves and decodes its POF's full
+ * geometry, and returns everything the client's 3D viewer webview needs to render
+ * every submodel and highlight the one matching this subsystem. Returns null for any
+ * line that isn't a `$Subsystem:` entry (or whose model can't be resolved) so the
+ * client's go-to-definition provider knows to fall through to normal behavior instead
+ * of opening a viewer.
+ */
+connection.onRequest(
+  "fso-lsp/getPofGeometryForSubsystem",
+  (params: { uri: string; line: number }): PofGeometryForSubsystemResult | null => {
+    const ships = shipEntriesByUri.get(params.uri) ?? [];
+
+    for (const ship of ships) {
+      const subsystem = ship.subsystems.find((s) => s.line === params.line);
+      if (!subsystem) {
+        continue;
+      }
+
+      const pof = resolvePofForShipEntry(params.uri, ship);
+      if (!pof || !ship.modelFile) {
+        return null;
+      }
+
+      const submodels: SubmodelGeometryPayload[] = pof.subobjects.map((s) => {
+        const geo = decodeSubmodelGeometry(s.bspData);
+        return {
+          name: s.name ?? `submodel_${s.submodelNumber}`,
+          parentIndex: pof.subobjects.findIndex((p) => p.submodelNumber === s.parentSubmodel),
+          offset: [s.offset.x, s.offset.y, s.offset.z],
+          positions: geo.positions,
+          normals: geo.normals,
+          uvs: geo.uvs,
+          indices: geo.indices,
+        };
+      });
+
+      const targetSubmodelIndex = pof.subobjects.findIndex(
+        (s) => (s.name ?? "").toLowerCase() === subsystem.name.toLowerCase(),
+      );
+
+      return { modelFile: ship.modelFile, targetSubmodelIndex, submodels };
+    }
+
+    return null;
+  },
+);
 
 documents.listen(connection);
 connection.listen();

@@ -19,11 +19,15 @@ const FILE_SIGNATURE = "PSPO";
  * bank properties), plus a few more chunks useful for count/consistency validation
  * (gun/missile bank counts, turret bank subobject linkage, eye points, build info,
  * autocentering point, insignia count) — see the pof-file-format project memory.
- * Deliberately does NOT decode geometry (BSP polygon data, shield mesh, collision
- * trees, insignia mesh data): those chunks (and the geometry portion of decoded ones)
+ * Does NOT decode shield mesh, collision trees, or insignia mesh data - those chunks
  * are skipped wholesale via each chunk's declared `length`, which this reader always
  * trusts as the authority for where the next chunk starts, even when a per-chunk
- * field-layout guess below turns out wrong for a given POF version.
+ * field-layout guess below turns out wrong for a given POF version. Each SOBJ/OBJ2
+ * subobject's BSP polygon blob (`bsp_data`) IS captured (as a zero-copy Buffer slice,
+ * on `PofSubobject.bspData`) but NOT decoded here - see pof/geometry.ts for the actual
+ * BSP-opcode walk that turns it into a renderable triangle mesh, kept separate so a
+ * caller that only needs names/hierarchy (the bulk of this reader's callers) never pays
+ * for geometry decoding.
  *
  * Field layouts for DOCK/PATH/GLOW/FUEL/SPCL/EYE/TGUN/TMIS are a best-effort
  * reconstruction from wiki documentation, not a transcription of FSO's modelread.cpp —
@@ -88,7 +92,7 @@ export function parsePof(buffer: Buffer): PofModel {
           break;
         case "SOBJ":
         case "OBJ2":
-          model.subobjects.push(readSubobject(reader, chunkDataEnd));
+          model.subobjects.push(readSubobject(reader, chunkDataEnd, chunkId as "SOBJ" | "OBJ2", model.version));
           break;
         case "DOCK":
           model.dockPoints.push(...readDockPoints(reader, chunkDataEnd));
@@ -155,17 +159,67 @@ function readTextures(reader: BinaryReader, chunkEnd: number): string[] {
   return textures;
 }
 
-function readSubobject(reader: BinaryReader, chunkEnd: number): PofSubobject {
+/**
+ * Field order verified against FSO's code/model/modelread.cpp (ID_SOBJ/ID_OBJ2 case in
+ * the model-loading loop): the two chunk IDs are NOT simply a name change - v21.16+
+ * (ID_OBJ2, used by virtually every real FS2/FSO-era POF) reads `radius` immediately
+ * after the submodel number and BEFORE `parent`/`offset`, whereas the older FS1-era
+ * ID_SOBJ reads it AFTER `offset`. A previous version of this reader used the ID_SOBJ
+ * order unconditionally, which silently misaligned every field after `parent` (parent
+ * index, name, properties, and critically the BSP data offset needed for geometry
+ * decoding) for any OBJ2 file - i.e. almost every real-world POF.
+ */
+function readSubobject(
+  reader: BinaryReader,
+  chunkEnd: number,
+  chunkId: "SOBJ" | "OBJ2",
+  version: number,
+): PofSubobject {
   const submodelNumber = reader.readInt32();
+  if (chunkId === "OBJ2") {
+    reader.skip(4); // radius (not currently exposed on PofSubobject)
+  }
   const parentSubmodel = reader.readInt32();
-  reader.skipVector(); // offset from parent
-  reader.skip(4); // radius
+  const offset = reader.readVector();
+  if (chunkId === "SOBJ") {
+    reader.skip(4); // radius
+  }
   reader.skipVector(); // geometric center
   reader.skipVector(); // bounding box min
   reader.skipVector(); // bounding box max
   const name = reader.position < chunkEnd ? reader.readString() : null;
   const properties = reader.position < chunkEnd ? reader.readString() : null;
-  return { submodelNumber, parentSubmodel, name, properties };
+
+  // ---------- submodel movement + BSP polygon data ----------
+  // rotation_type, rotation_axis_id (always present); translation_type/axis_id were
+  // added in POF v23.01+ (pm->version >= 2301 in modelread.cpp); then an `nchunks` int
+  // that must be 0 for an unchunked model (anything else is a format this reader
+  // doesn't understand); then `bsp_data_size` + that many raw bytes of BSP polygon
+  // data. Every step here is guarded (bounds-checked, wrapped in try/catch) so a wrong
+  // guess or truncated file degrades to "no geometry for this submodel" rather than
+  // corrupting the rest of the parse - consistent with this reader's established style.
+  let bspData: Buffer | null = null;
+  try {
+    reader.skip(4); // rotation_type
+    reader.skip(4); // rotation_axis_id
+    if (version >= 2301) {
+      reader.skip(4); // translation_type
+      reader.skip(4); // translation_axis_id
+    }
+    if (reader.canRead(4)) {
+      const nchunks = reader.readInt32();
+      if (nchunks === 0 && reader.canRead(4)) {
+        const bspDataSize = reader.readInt32();
+        if (bspDataSize > 0) {
+          bspData = reader.readRawBytes(bspDataSize);
+        }
+      }
+    }
+  } catch {
+    bspData = null;
+  }
+
+  return { submodelNumber, parentSubmodel, name, properties, offset, bspData };
 }
 
 function readDockPoints(reader: BinaryReader, chunkEnd: number): PofDockPoint[] {

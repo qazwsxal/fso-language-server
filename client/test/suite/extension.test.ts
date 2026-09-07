@@ -496,7 +496,81 @@ suite("FSO Table Language Server", () => {
     assert.ok(hoverText.includes("✓"), `expected a found checkmark, got: ${hoverText}`);
     assert.ok(hoverText.includes("iconfighter04.dds"), `expected the resolved file path in hover, got: ${hoverText}`);
   });
+
+  test("F12 on a $Subsystem: line opens the 3D POF viewer instead of returning a text location", async () => {
+    // The 3D viewer is a side effect (opening a webview), not a navigable text
+    // Location, so `vscode.executeDefinitionProvider` is expected to come back empty
+    // for this line - the real assertion is that invoking it doesn't throw, and that a
+    // new "POF: fighter01.pof" webview tab appears as a result of the client-side
+    // definition provider's side effect (see client/src/extension.ts /
+    // client/src/pofViewer.ts).
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const turretLine = lines.findIndex((l) => l.includes("$Subsystem: turret01"));
+    assert.ok(turretLine >= 0, "fixture must contain a $Subsystem: turret01 line");
+
+    const tabsBefore = countPofViewerTabs();
+
+    await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(turretLine, 5),
+    );
+
+    // Poll briefly: the provider's server round trip + webview creation happen asynchronously.
+    const opened = await waitFor(() => countPofViewerTabs() > tabsBefore, 5000);
+    assert.ok(opened, "expected a new 'POF: fighter01.pof' webview tab to open after F12 on $Subsystem: turret01");
+  });
+
+  test("F12 elsewhere in ships.tbl does not open the 3D viewer", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const nameLine = lines.findIndex((l) => l.includes("$Name: GTF Ulysses"));
+    assert.ok(nameLine >= 0);
+
+    const tabsBefore = countPofViewerTabs();
+    const result = await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(nameLine, 2),
+    );
+    assert.ok(!result || (Array.isArray(result) && result.length === 0), "expected no definition result on a non-subsystem line");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.strictEqual(countPofViewerTabs(), tabsBefore, "did not expect a new POF viewer tab from a non-subsystem line");
+  });
 });
+
+/** Counts open editor tabs whose label matches the 3D POF viewer webview panel's title ("POF: <filename>"). */
+function countPofViewerTabs(): number {
+  let count = 0;
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (tab.label.startsWith("POF: ")) {
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return predicate();
+}
 
 async function getHoverText(uri: vscode.Uri, line: number): Promise<string> {
   const hovers = (await vscode.commands.executeCommand(

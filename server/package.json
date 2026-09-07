@@ -4,7 +4,9 @@
   "private": true,
   "main": "out/server.js",
   "scripts": {
-    "compile": "tsc -p . --noEmit"
+    "compile": "tsc -p . --noEmit",
+    "pretest": "tsc -p tsconfig.test.json",
+    "test": "node --test out-test/test"
   },
   "dependencies": {
     "vscode-languageserver": "^9.0.1",

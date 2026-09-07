@@ -11,6 +11,7 @@ $Ship_anim: nonexistent_anim
 $Ship_overhead: vpctexture
 $Subsystem: engine01, 0.0, 5.0
 $Subsystem: nonexistent_part, 0.0, 5.0
+$Subsystem: turret01, 0.0, 5.0
 
 $Name: GTF Apollo
 $Short name: Apollo

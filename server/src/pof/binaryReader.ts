@@ -62,6 +62,20 @@ export class BinaryReader {
     return { x: this.readFloat(), y: this.readFloat(), z: this.readFloat() };
   }
 
+  /**
+   * Returns a zero-copy view (Buffer#subarray, not a copy) of `length` raw bytes at the
+   * current position, advancing past them. Returns null (without advancing) if out of
+   * bounds - same "degrade rather than throw" contract as readString().
+   */
+  readRawBytes(length: number): Buffer | null {
+    if (length < 0 || !this.canRead(length)) {
+      return null;
+    }
+    const v = this.buffer.subarray(this.offset, this.offset + length);
+    this.offset += length;
+    return v;
+  }
+
   readFixedChars(length: number): string {
     const v = this.buffer.toString("ascii", this.offset, this.offset + length);
     this.offset += length;
