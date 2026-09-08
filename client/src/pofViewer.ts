@@ -88,16 +88,19 @@ export function showPofViewer(context: vscode.ExtensionContext, result: PofGeome
     }
   });
 
-  const webviewJsUri = panel.webview.asWebviewUri(
-    vscode.Uri.file(context.asAbsolutePath(path.join("dist", "pofViewerWebview.js"))),
-  );
+  panel.webview.html = buildPofViewerHtml(context, panel.webview);
+}
+
+/** Builds the 3D viewer webview's HTML shell - shared between showPofViewer()'s own manually-managed panel and pofCustomEditor.ts's VSCode-owned custom editor panel (opened by ctrl+clicking a `$Subsystem:` link, or by opening a .pof file directly). */
+export function buildPofViewerHtml(context: vscode.ExtensionContext, webview: vscode.Webview): string {
+  const webviewJsUri = webview.asWebviewUri(vscode.Uri.file(context.asAbsolutePath(path.join("dist", "pofViewerWebview.js"))));
   const nonce = getNonce();
 
-  panel.webview.html = `<!doctype html>
+  return `<!doctype html>
 <html>
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${panel.webview.cspSource}; script-src 'nonce-${nonce}'; style-src ${panel.webview.cspSource} 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; script-src 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline';">
 <style>
   html, body, #viewer-root { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1e1e1e; }
 </style>

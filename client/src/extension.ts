@@ -10,9 +10,13 @@ import {
   Hover,
   HoverProvider,
   MarkdownString,
+  DocumentLink,
+  DocumentLinkProvider,
+  Range,
 } from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
 import { showPofViewer, PofGeometryForSubsystemResult } from "./pofViewer";
+import { registerPofCustomEditor } from "./pofCustomEditor";
 
 let client: LanguageClient;
 
@@ -185,6 +189,55 @@ export function activate(context: ExtensionContext): void {
     },
   };
   context.subscriptions.push(languages.registerHoverProvider({ language: "fso-table" }, subsystemHoverProvider));
+
+  /**
+   * A genuine, single-gesture ctrl+click for `$Subsystem:` lines - unlike the earlier
+   * DocumentLink attempt (which pointed at a `command:` URI VSCode doesn't honor as
+   * a command; see the hover-provider doc comment above), this link's target is a REAL
+   * `file:` URI for the resolved POF file, with the target subsystem name carried in
+   * the query string. Opening a real resource is something VSCode's built-in "open
+   * this link" handler genuinely does support, and since `.pof` is registered as the
+   * default editor for pofCustomEditor.ts's viewer (see package.json's
+   * `customEditors`), VSCode opens the 3D view instead of trying to show binary
+   * garbage as text - so this reproduces the original literal ctrl+click UX.
+   *
+   * Only offered for subsystems whose model resolves to a loose file (not one inside a
+   * .vp/.vpc archive - there's no real filesystem path to point a `file:` URI at for
+   * those), and computed once per document via a single request rather than one
+   * round trip per `$Subsystem:` line.
+   */
+  const subsystemLinkProvider: DocumentLinkProvider = {
+    async provideDocumentLinks(document) {
+      try {
+        await clientReady;
+        const infos = await client.sendRequest<{ line: number; pofPath: string; subsystemName: string }[]>(
+          "fso-lsp/getPofSubsystemLinks",
+          { uri: document.uri.toString() },
+        );
+        const links: DocumentLink[] = [];
+        for (const { line, pofPath, subsystemName } of infos) {
+          if (line >= document.lineCount) {
+            continue;
+          }
+          const text = document.lineAt(line).text;
+          const nameStart = text.indexOf(subsystemName);
+          if (nameStart === -1) {
+            continue;
+          }
+          const target = Uri.file(pofPath).with({ query: `subsystem=${encodeURIComponent(subsystemName)}` });
+          const link = new DocumentLink(new Range(line, nameStart, line, nameStart + subsystemName.length), target);
+          link.tooltip = "Open 3D view";
+          links.push(link);
+        }
+        return links;
+      } catch {
+        return [];
+      }
+    },
+  };
+  context.subscriptions.push(languages.registerDocumentLinkProvider({ language: "fso-table" }, subsystemLinkProvider));
+
+  context.subscriptions.push(...registerPofCustomEditor(context, client, clientReady));
 }
 
 export function deactivate(): Thenable<void> | undefined {
