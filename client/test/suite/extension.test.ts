@@ -32,6 +32,124 @@ suite("FSO Table Language Server", () => {
     );
   });
 
+  test("does not flag a turret's own $Flags: as out of order relative to the ship-level $Flags:", async () => {
+    // Regression test: a real Blue Planet ships.tbm showed every single turret's
+    // $Flags: line flagged "out of the expected field order" - the schema validator has
+    // no concept of $Subsystem: opening a nested, block-local scope, so it was comparing
+    // a turret's own $Flags: (which legitimately repeats the field name) against the
+    // ship-level $Flags:'s position, and since $Subsystem: itself sits later in the
+    // field-order list than $Flags:, every subsequent per-turret $Flags: read as "out of
+    // order" no matter how the file was actually written.
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    const diagnostics = await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const turretFlagsLine = lines.findIndex((l) => l.includes('"turret-lock"'));
+    assert.ok(turretFlagsLine >= 0, "fixture must contain a turret-level $Flags: line");
+
+    assert.ok(
+      diagnostics.every((d) => d.range.start.line !== turretFlagsLine),
+      `did not expect any diagnostic on the turret's own $Flags: line, got: ${JSON.stringify(diagnostics.filter((d) => d.range.start.line === turretFlagsLine).map((d) => d.message))}`,
+    );
+  });
+
+  test("flags a ship $AI Class: that doesn't exist in ai.tbl, but not a real one", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    const diagnostics = await waitForDiagnostics(uri);
+
+    const messages = diagnostics.map((d) => d.message);
+    assert.ok(
+      messages.some((m) => /\$AI Class:.*"Nonexistent AI Class".*was not found in ai\.tbl/i.test(m)),
+      `expected an unresolved AI-class diagnostic, got: ${JSON.stringify(messages)}`,
+    );
+    assert.ok(
+      messages.some((m) => /\$AI Class:.*"Rookie"/i.test(m)) === false,
+      `did not expect a missing-AI-class warning for the real "Rookie" entry, got: ${JSON.stringify(messages)}`,
+    );
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const goodLine = lines.findIndex((l) => l.includes("$AI Class: Rookie"));
+    const badLine = lines.findIndex((l) => l.includes("$AI Class: Nonexistent AI Class"));
+    assert.ok(goodLine >= 0 && badLine >= 0, "fixture must contain both a matching and mismatching $AI Class: line");
+
+    const goodHover = await getHoverText(uri, goodLine);
+    assert.ok(goodHover.includes("✓"), `expected a found checkmark, got: ${goodHover}`);
+    assert.ok(goodHover.includes("ai.tbl"), `expected the resolved ai.tbl location in hover, got: ${goodHover}`);
+  });
+
+  test("go-to-definition on a ship's $AI Class: jumps to ai.tbl's matching $Name:", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const aiClassLine = lines.findIndex((l) => l.includes("$AI Class: Rookie"));
+    assert.ok(aiClassLine >= 0, "fixture must contain a $AI Class: Rookie line");
+
+    const locations = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(aiClassLine, lines[aiClassLine].length - 1),
+    )) as vscode.Location[];
+    assert.ok(locations && locations.length > 0, "expected at least one definition location");
+    assert.ok(
+      locations[0].uri.fsPath.endsWith(path.join("data", "tables", "ai.tbl")),
+      `expected the definition to point at ai.tbl, got: ${locations[0].uri.toString()}`,
+    );
+  });
+
+  test("flags a species' $Default IFF: that doesn't exist in iff_defs.tbl, but not a real one", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/mymod-sdf.tbm"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    const diagnostics = await waitForDiagnostics(uri);
+
+    const messages = diagnostics.map((d) => d.message);
+    assert.ok(
+      messages.some((m) => /\$Default IFF:.*"Nonexistent IFF".*was not found in iff_defs\.tbl/i.test(m)),
+      `expected an unresolved IFF diagnostic, got: ${JSON.stringify(messages)}`,
+    );
+    assert.ok(
+      messages.some((m) => /\$Default IFF:.*"Friendly"/i.test(m)) === false,
+      `did not expect a missing-IFF warning for the real "Friendly" entry, got: ${JSON.stringify(messages)}`,
+    );
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const goodLine = lines.findIndex((l) => l.includes("$Default IFF:\t\tFriendly"));
+    assert.ok(goodLine >= 0, "fixture must contain a $Default IFF: Friendly line");
+
+    const goodHover = await getHoverText(uri, goodLine);
+    assert.ok(goodHover.includes("✓"), `expected a found checkmark, got: ${goodHover}`);
+    assert.ok(goodHover.includes("iff_defs.tbl"), `expected the resolved iff_defs.tbl location in hover, got: ${goodHover}`);
+  });
+
+  test("go-to-definition on a species' $Default IFF: jumps to iff_defs.tbl's matching $IFF Name:", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/mymod-sdf.tbm"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const iffLine = lines.findIndex((l) => l.includes("$Default IFF:\t\tFriendly"));
+    assert.ok(iffLine >= 0, "fixture must contain a $Default IFF: Friendly line");
+
+    const locations = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(iffLine, lines[iffLine].length - 1),
+    )) as vscode.Location[];
+    assert.ok(locations && locations.length > 0, "expected at least one definition location");
+    assert.ok(
+      locations[0].uri.fsPath.endsWith(path.join("data", "tables", "iff_defs.tbl")),
+      `expected the definition to point at iff_defs.tbl, got: ${locations[0].uri.toString()}`,
+    );
+  });
+
   test("hover resolves $Subsystem against the mod's actual model file", async () => {
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);
@@ -533,6 +651,57 @@ suite("FSO Table Language Server", () => {
     const armorTblText = fs.readFileSync(path.join(fixturesRoot, "data/tables/armor.tbl"), "utf8");
     const expectedLine = armorTblText.split(/\r\n|\r|\n/).findIndex((l) => l.includes("$Name: Standard"));
     assert.strictEqual(locations[0].range.start.line, expectedLine);
+  });
+
+  test("go-to-definition works when clicking the second word of a multi-word cross-reference value", async () => {
+    // Regression test: reported as "go to definition/declaration don't seem to work on
+    // multi-word names". Every prior go-to-definition test happened to click a
+    // single-word value, or the first word/character of a multi-word one - clicking
+    // squarely on the SECOND word of a multi-word value was never actually exercised.
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+
+    // Line-based cross-reference (no column restriction at all): $Shield Armor Type: Heavy Armor
+    const shieldArmorLine = lines.findIndex((l) => l.includes("$Shield Armor Type: Heavy Armor"));
+    assert.ok(shieldArmorLine >= 0, "fixture must contain a $Shield Armor Type: Heavy Armor line");
+    const secondWordCol = lines[shieldArmorLine].indexOf("Armor", lines[shieldArmorLine].indexOf("Heavy Armor")) + 2;
+
+    const shieldLocations = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(shieldArmorLine, secondWordCol),
+    )) as vscode.Location[];
+    assert.ok(
+      shieldLocations && shieldLocations.length > 0,
+      `expected a definition location when clicking the second word of "Heavy Armor", got none`,
+    );
+    assert.ok(
+      shieldLocations[0].uri.fsPath.endsWith(path.join("data", "tables", "armor.tbl")),
+      `expected the definition to point at armor.tbl, got: ${shieldLocations[0].uri.toString()}`,
+    );
+
+    // Token-based cross-reference (quoted-range restricted): $Default PBanks: ( "Interceptor Cannon" "" )
+    const bankLine = lines.findIndex((l) => l.includes('"Interceptor Cannon"'));
+    assert.ok(bankLine >= 0, "fixture must contain the turret's $Default PBanks: line");
+    const cannonCol = lines[bankLine].indexOf("Cannon") + 2;
+
+    const bankLocations = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(bankLine, cannonCol),
+    )) as vscode.Location[];
+    assert.ok(
+      bankLocations && bankLocations.length > 0,
+      `expected a definition location when clicking the second word of "Interceptor Cannon", got none`,
+    );
+    assert.ok(
+      bankLocations[0].uri.fsPath.endsWith(path.join("data", "tables", "weapons.tbl")),
+      `expected the definition to point at weapons.tbl, got: ${bankLocations[0].uri.toString()}`,
+    );
   });
 
   test("go-to-declaration on a weapon's $Damage Type: jumps to armor.tbl's matching $Damage Type: entries", async () => {

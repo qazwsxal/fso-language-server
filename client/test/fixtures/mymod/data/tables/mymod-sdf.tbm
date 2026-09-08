@@ -24,4 +24,7 @@ $AwacsMultiplier:	1.00
 $Countermeasure type: UEF Fighter Flare
 $Borrows Flyby Sounds from: Terran
 
+$Species_Name:		Pirate
+$Default IFF:		Nonexistent IFF
+
 #End

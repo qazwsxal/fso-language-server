@@ -7,6 +7,8 @@ $POF file: fighter01.pof
 $Default PBanks: ( "Subach HL-7" )
 $Default SBanks: ( "Nonexistent Weapon" )
 $Armor Type: Nonexistent Armor
+$Flags: ( "stealth" )
+$AI Class: Rookie
 $Ship_icon: iconfighter04
 $Ship_anim: nonexistent_anim
 $Ship_overhead: vpctexture
@@ -14,11 +16,14 @@ $Subsystem: engine01, 0.0, 5.0
 $Subsystem: nonexistent_part, 0.0, 5.0
 $Subsystem: turret01, 0.0, 5.0
 $Default PBanks: ( "Interceptor Cannon" "" )
+$Flags: ( "turret-lock" )
 
 $Name: GTF Apollo
 $Short name: Apollo
 $Species: Nonexistent Species
 $POF file: fighter01.pof
 $Armor Type: Standard
+$Shield Armor Type: Heavy Armor
+$AI Class: Nonexistent AI Class
 
 #End

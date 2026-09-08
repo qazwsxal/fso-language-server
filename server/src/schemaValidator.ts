@@ -35,6 +35,8 @@ export function validateAgainstSchema(sections: TableSection[], schema: TableSch
     let lastIndex = -1;
     let lastKey = "";
     let currentEntryName = "(entry)";
+    let inNestedScope = false;
+    const nestedScopeKey = schema.nestedScopeStartField ? normalize(schema.nestedScopeStartField) : null;
 
     for (const entry of section.entries) {
       if (entry.sigil === "$" && normalize(entry.key) === normalize(schema.entryKeyField)) {
@@ -42,11 +44,23 @@ export function validateAgainstSchema(sections: TableSection[], schema: TableSch
         lastIndex = -1;
         lastKey = "";
         currentEntryName = entry.value.trim() || "(unnamed)";
+        inNestedScope = false;
       }
 
       if (entry.sigil !== "$") {
         // +Subfields are positionally free-form modifiers of the preceding $Field; not order-checked.
         continue;
+      }
+
+      if (inNestedScope) {
+        // Past the entry's nested-scope boundary (e.g. a ship's first $Subsystem:) -
+        // field names here can legitimately repeat with a block-local meaning, so
+        // there's nothing this flat field-order list can correctly check anymore.
+        continue;
+      }
+
+      if (nestedScopeKey && normalize(entry.key) === nestedScopeKey) {
+        inNestedScope = true;
       }
 
       const idx = orderIndex.get(normalize(entry.key));

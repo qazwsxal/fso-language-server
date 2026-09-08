@@ -3,6 +3,9 @@ import { TableSection } from "../parser";
 export interface SpeciesEntryInfo {
   name: string;
   nameLine: number;
+  /** From `$Default IFF:` - references an iff_defs.tbl `$IFF Name:` entry (e.g. "Friendly", "Hostile"). */
+  defaultIff: string | null;
+  defaultIffLine: number | null;
   /** Modular-table-only sentinels (see fso-table-format): only relevant when merging .tbm layers. */
   noCreate: boolean;
   remove: boolean;
@@ -27,7 +30,7 @@ export function extractSpeciesEntries(sections: TableSection[]): SpeciesEntryInf
       const key = field.key.trim().toLowerCase();
 
       if (field.sigil === "$" && key === "species_name") {
-        current = { name: field.value.trim(), nameLine: field.line, noCreate: false, remove: false };
+        current = { name: field.value.trim(), nameLine: field.line, defaultIff: null, defaultIffLine: null, noCreate: false, remove: false };
         entries.push(current);
         continue;
       }
@@ -41,6 +44,12 @@ export function extractSpeciesEntries(sections: TableSection[]): SpeciesEntryInf
         } else if (key === "remove") {
           current.remove = true;
         }
+        continue;
+      }
+
+      if (key === "default iff") {
+        current.defaultIff = field.value.trim();
+        current.defaultIffLine = field.line;
       }
     }
   }

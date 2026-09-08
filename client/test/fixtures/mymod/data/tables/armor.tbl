@@ -8,4 +8,9 @@ $Damage Type: Flak
 	+Calculation: Multiplicative
 	+Value: 0.5
 
+$Name: Heavy Armor
+$Damage Type: Laser
+	+Calculation: Multiplicative
+	+Value: 0.75
+
 #End

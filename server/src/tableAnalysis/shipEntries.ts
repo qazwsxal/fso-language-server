@@ -60,6 +60,9 @@ export interface ShipEntryInfo {
   /** From `$Species:` - references a species_defs.tbl `$Species_Name:` entry. Ship-level only, same `$Subsystem:`-scoping caveat as the other cross-referencing fields above (species has no per-subsystem meaning, but scoping stays consistent for simplicity). */
   species: string | null;
   speciesLine: number | null;
+  /** From `$AI Class:` - references an ai.tbl `$Name:` entry (e.g. "Rookie", "Insane"). Ship-level only. */
+  aiClass: string | null;
+  aiClassLine: number | null;
   /** Bitmap/animation-referencing fields, confirmed against ship.cpp's field list. */
   textureRefs: ShipTextureRef[];
   /** Modular-table-only sentinels (see fso-table-format): only relevant when merging .tbm layers. */
@@ -109,6 +112,8 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           shieldArmorTypeLine: null,
           species: null,
           speciesLine: null,
+          aiClass: null,
+          aiClassLine: null,
           textureRefs: [],
           noCreate: false,
           remove: false,
@@ -172,6 +177,9 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
       } else if (key === "species") {
         current.species = field.value.trim();
         current.speciesLine = field.line;
+      } else if (key === "ai class") {
+        current.aiClass = field.value.trim();
+        current.aiClassLine = field.line;
       }
     }
   }

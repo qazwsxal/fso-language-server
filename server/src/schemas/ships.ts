@@ -80,4 +80,10 @@ export const shipsSchema: TableSchema = {
     "Thruster",
     "Subsystem",
   ],
+  /**
+   * A turret's own `$Flags:`/`$Armor Type:`/etc. inside a `$Subsystem:` block are
+   * block-local, not the ship-level fields of the same name - see nestedScopeStartField's
+   * doc comment in schemas/types.ts for the real-file false-positive this fixes.
+   */
+  nestedScopeStartField: "Subsystem",
 };

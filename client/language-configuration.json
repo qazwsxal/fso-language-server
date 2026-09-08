@@ -5,6 +5,7 @@
   "brackets": [
     ["(", ")"]
   ],
+  "wordPattern": "\"[^\"\\r\\n]*\"|[^\\s\"(),:;]+(?:[ \\t]+[^\\s\"(),:;]+)*",
   "autoClosingPairs": [
     { "open": "\"", "close": "\"" },
     { "open": "(", "close": ")" }

@@ -31,4 +31,16 @@ export interface TableSchema {
    * under the preceding `$Field` for informational purposes.
    */
   fieldOrder: string[];
+  /**
+   * A field (e.g. ships.tbl's "Subsystem") that opens a nested per-block scope in which
+   * field names can legitimately repeat with a different, block-local meaning (a
+   * turret's own `$Flags:`/`$Armor Type:`/`$Default PBanks:`, distinct from the ship's
+   * own same-named fields) - confirmed against a real Blue Planet ships.tbm where a
+   * turret's `$Flags:` was flagged "out of the expected field order" every single time,
+   * because the validator has no concept of nested scope and was comparing it against
+   * the *ship-level* `$Flags:` field's position instead. Once this field is seen, order
+   * checking stops for the remainder of the entry rather than trying to model the
+   * nested schema too (which fieldOrder isn't shaped to express).
+   */
+  nestedScopeStartField?: string;
 }

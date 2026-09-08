@@ -1,0 +1,11 @@
+#IFFs
+
+$IFF Name:		Friendly
+$Color:			( 0, 255, 0 )
+$Attacks:		( "Hostile" )
+
+$IFF Name:		Hostile
+$Color:			( 255, 0, 0 )
+$Attacks:		( "Friendly" )
+
+#End

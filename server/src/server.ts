@@ -37,7 +37,10 @@ import {
   EffectiveArmorEntry,
   SourceLocation,
 } from "./tableAnalysis/mergedArmorTable";
+import { extractSpeciesEntries, SpeciesEntryInfo } from "./tableAnalysis/speciesEntries";
 import { buildEffectiveSpeciesTable, collectDisplaySpeciesNames, EffectiveSpeciesEntry } from "./tableAnalysis/mergedSpeciesTable";
+import { buildEffectiveAiClassTable, collectDisplayAiClassNames, EffectiveAiClassEntry } from "./tableAnalysis/mergedAiClassTable";
+import { buildEffectiveIffTable, collectDisplayIffNames, EffectiveIffEntry } from "./tableAnalysis/mergedIffTable";
 import {
   buildSearchPath,
   resolveModelFile,
@@ -71,6 +74,8 @@ const parsedByUri = new Map<string, ParseResult>();
 const shipEntriesByUri = new Map<string, ShipEntryInfo[]>();
 /** Per-document weapon-entry cache (model file only - weapons have no subsystem concept), keyed by URI. */
 const weaponEntriesByUri = new Map<string, WeaponEntryInfo[]>();
+/** Per-document species-entry cache (currently just `$Default IFF:`), keyed by URI. */
+const speciesEntriesByUri = new Map<string, SpeciesEntryInfo[]>();
 
 connection.onInitialize((_params: InitializeParams): InitializeResult => {
   return {
@@ -161,6 +166,16 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       }
     }
 
+    if (ship.aiClassLine === line && ship.aiClass) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveAiClassTable(searchDirs).get(ship.aiClass.toLowerCase());
+        return entry?.nameLocation ? toDefinitionLocation(entry.nameLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
     const isArmor = ship.armorTypeLine === line && ship.armorType;
     const isShieldArmor = ship.shieldArmorTypeLine === line && ship.shieldArmorType;
     if (!isArmor && !isShieldArmor) {
@@ -190,6 +205,20 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
     }
   }
 
+  const species = speciesEntriesByUri.get(documentUri) ?? [];
+  for (const entry of species) {
+    if (entry.defaultIffLine !== line || !entry.defaultIff) {
+      continue;
+    }
+    try {
+      const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+      const iffEntry = getEffectiveIffTable(searchDirs).get(entry.defaultIff.toLowerCase());
+      return iffEntry?.nameLocation ? toDefinitionLocation(iffEntry.nameLocation) : null;
+    } catch {
+      return null;
+    }
+  }
+
   return null;
 }
 
@@ -204,6 +233,7 @@ documents.onDidClose((e) => {
   parsedByUri.delete(e.document.uri);
   shipEntriesByUri.delete(e.document.uri);
   weaponEntriesByUri.delete(e.document.uri);
+  speciesEntriesByUri.delete(e.document.uri);
   connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
 });
 
@@ -224,6 +254,8 @@ connection.onDidChangeWatchedFiles(() => {
   effectiveWeaponsTableCache.clear();
   effectiveArmorTableCache.clear();
   effectiveSpeciesTableCache.clear();
+  effectiveAiClassTableCache.clear();
+  effectiveIffTableCache.clear();
   textureIndexCache.clear();
   textureNamesSortedCache.clear();
 });
@@ -233,16 +265,20 @@ function validateAndPublish(document: TextDocument): void {
   parsedByUri.set(document.uri, result);
   shipEntriesByUri.set(document.uri, extractShipEntries(result.sections));
   weaponEntriesByUri.set(document.uri, extractWeaponEntries(result.sections));
+  speciesEntriesByUri.set(document.uri, extractSpeciesEntries(result.sections));
 
   const schema = findSchemaForFile(document.uri);
   const schemaDiagnostics = schema ? validateAgainstSchema(result.sections, schema) : [];
   const ships = shipEntriesByUri.get(document.uri) ?? [];
   const weapons = weaponEntriesByUri.get(document.uri) ?? [];
+  const species = speciesEntriesByUri.get(document.uri) ?? [];
   const bankCountDiagnostics = computeBankCountDiagnostics(document.uri, ships);
   const bankWeaponNameDiagnostics = computeBankWeaponNameDiagnostics(document.uri, ships);
   const weaponModelDiagnostics = computeWeaponModelDiagnostics(document.uri, weapons);
   const armorTypeDiagnostics = computeArmorTypeDiagnostics(document.uri, ships);
   const speciesDiagnostics = computeSpeciesDiagnostics(document.uri, ships);
+  const aiClassDiagnostics = computeAiClassDiagnostics(document.uri, ships);
+  const iffDiagnostics = computeIffDiagnostics(document.uri, species);
   const damageTypeDiagnostics = computeDamageTypeDiagnostics(document.uri, weapons);
   const textureDiagnostics = computeTextureDiagnostics(document.uri, ships, weapons);
 
@@ -254,6 +290,8 @@ function validateAndPublish(document: TextDocument): void {
     ...weaponModelDiagnostics,
     ...armorTypeDiagnostics,
     ...speciesDiagnostics,
+    ...aiClassDiagnostics,
+    ...iffDiagnostics,
     ...damageTypeDiagnostics,
     ...textureDiagnostics,
   ].map((d) => ({
@@ -433,6 +471,38 @@ function getEffectiveSpeciesTable(searchDirs: string[]): Map<string, EffectiveSp
 }
 
 /**
+ * Cache of the merged/effective ai.tbl view, mirroring the species/armor/ship/weapons caches.
+ */
+const effectiveAiClassTableCache = new Map<string, Map<string, EffectiveAiClassEntry>>();
+
+function getEffectiveAiClassTable(searchDirs: string[]): Map<string, EffectiveAiClassEntry> {
+  const key = searchDirs.join("|");
+  const cached = effectiveAiClassTableCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const table = buildEffectiveAiClassTable(searchDirs);
+  effectiveAiClassTableCache.set(key, table);
+  return table;
+}
+
+/**
+ * Cache of the merged/effective iff_defs.tbl view, mirroring the species/armor/ship/weapons caches.
+ */
+const effectiveIffTableCache = new Map<string, Map<string, EffectiveIffEntry>>();
+
+function getEffectiveIffTable(searchDirs: string[]): Map<string, EffectiveIffEntry> {
+  const key = searchDirs.join("|");
+  const cached = effectiveIffTableCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const table = buildEffectiveIffTable(searchDirs);
+  effectiveIffTableCache.set(key, table);
+  return table;
+}
+
+/**
  * Cache of the texture/animation basename index (see textureIndex.ts), keyed by the
  * joined search-path directory list - same cache-key convention as the merged-table
  * caches above.
@@ -585,6 +655,77 @@ function computeSpeciesDiagnostics(documentUri: string, ships: ShipEntryInfo[]):
 }
 
 /**
+ * Cross-table check: a ship's `$AI Class:` should name an ai.tbl `$Name:` entry (e.g.
+ * "Rookie", "Insane"). An unresolvable AI class falls back to whatever the engine's
+ * default/clamped handling does rather than the intended skill level.
+ */
+function computeAiClassDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let aiClassTable: Map<string, EffectiveAiClassEntry> | null = null;
+
+  for (const ship of ships) {
+    if (!ship.aiClass || ship.aiClassLine === null) {
+      continue;
+    }
+    try {
+      if (!aiClassTable) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        aiClassTable = getEffectiveAiClassTable(searchDirs);
+      }
+      if (!aiClassTable.has(ship.aiClass.toLowerCase())) {
+        diagnostics.push({
+          line: ship.aiClassLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$AI Class: "${ship.aiClass}" was not found in ai.tbl (checked across the active mod's search path)`,
+          severity: "warning",
+        });
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Cross-table check: a species' `$Default IFF:` should name an iff_defs.tbl
+ * `$IFF Name:` entry (e.g. "Friendly", "Hostile"). Only meaningful when a
+ * species_defs.tbl/*-sdf.tbm is the document actually open, since that's the only place
+ * `$Default IFF:` appears.
+ */
+function computeIffDiagnostics(documentUri: string, species: SpeciesEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let iffTable: Map<string, EffectiveIffEntry> | null = null;
+
+  for (const entry of species) {
+    if (!entry.defaultIff || entry.defaultIffLine === null) {
+      continue;
+    }
+    try {
+      if (!iffTable) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        iffTable = getEffectiveIffTable(searchDirs);
+      }
+      if (!iffTable.has(entry.defaultIff.toLowerCase())) {
+        diagnostics.push({
+          line: entry.defaultIffLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$Default IFF: "${entry.defaultIff}" was not found in iff_defs.tbl (checked across the active mod's search path)`,
+          severity: "warning",
+        });
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
  * Cross-checks a ship's `$Default PBanks:`/`$Default SBanks:` weapon-name-list length
  * against the POF's actual GPNT/MPNT bank count. Only emitted for fields physically
  * present in *this* document (so there's a real line to attach the diagnostic to).
@@ -624,6 +765,48 @@ function computeBankCountDiagnostics(documentUri: string, ships: ShipEntryInfo[]
           message: `$Default SBanks: lists ${declared} bank(s) but the model's MPNT chunk defines ${pof.secondaryBankCount} secondary bank(s)`,
           severity: "warning",
         });
+      }
+    }
+
+    // A turret's own $Default PBanks:/$Default SBanks: should have one entry per
+    // TGUN/TMIS bank the POF actually defines at that turret's base submodel - mirrors
+    // the ship-level GPNT/MPNT check above, just scoped to one submodel's turret banks
+    // instead of the whole model's primary/secondary gun points.
+    for (const subsystem of ship.subsystems) {
+      if (!subsystem.defaultPrimaryBanks && !subsystem.defaultSecondaryBanks) {
+        continue;
+      }
+      const match = pof.subobjects.find((s) => (s.name ?? "").toLowerCase() === subsystem.name.toLowerCase());
+      if (!match) {
+        continue;
+      }
+
+      if (subsystem.defaultPrimaryBanks) {
+        const actualCount = pof.turretGunBanks.filter((b) => b.baseSubobject === match.submodelNumber).length;
+        const declared = subsystem.defaultPrimaryBanks.weaponNames.length;
+        if (actualCount > 0 && declared !== actualCount) {
+          diagnostics.push({
+            line: subsystem.defaultPrimaryBanks.line,
+            startCol: 0,
+            endCol: 1000,
+            message: `$Default PBanks: lists ${declared} bank(s) but the model's turret "${subsystem.name}" defines ${actualCount} gun bank(s)`,
+            severity: "warning",
+          });
+        }
+      }
+
+      if (subsystem.defaultSecondaryBanks) {
+        const actualCount = pof.turretMissileBanks.filter((b) => b.baseSubobject === match.submodelNumber).length;
+        const declared = subsystem.defaultSecondaryBanks.weaponNames.length;
+        if (actualCount > 0 && declared !== actualCount) {
+          diagnostics.push({
+            line: subsystem.defaultSecondaryBanks.line,
+            startCol: 0,
+            endCol: 1000,
+            message: `$Default SBanks: lists ${declared} bank(s) but the model's turret "${subsystem.name}" defines ${actualCount} missile bank(s)`,
+            severity: "warning",
+          });
+        }
       }
     }
   }
@@ -964,6 +1147,38 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
         return [];
       }
     }
+
+    if (fieldKey === "ai class") {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const names = collectDisplayAiClassNames(getEffectiveAiClassTable(searchDirs)).sort();
+        const range = computeLineValueRange(doc, params.position.line);
+        return names.map((name) => ({
+          label: name,
+          kind: CompletionItemKind.EnumMember,
+          filterText: name,
+          textEdit: { range, newText: name },
+        }));
+      } catch {
+        return [];
+      }
+    }
+
+    if (fieldKey === "default iff") {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const names = collectDisplayIffNames(getEffectiveIffTable(searchDirs)).sort();
+        const range = computeLineValueRange(doc, params.position.line);
+        return names.map((name) => ({
+          label: name,
+          kind: CompletionItemKind.EnumMember,
+          filterText: name,
+          textEdit: { range, newText: name },
+        }));
+      } catch {
+        return [];
+      }
+    }
   }
 
   if (/^\s*\$\S*$/.test(linePrefix)) {
@@ -1109,6 +1324,27 @@ connection.onHover((params): Hover | null => {
     }
   }
 
+  const species = speciesEntriesByUri.get(params.textDocument.uri) ?? [];
+  for (const entry of species) {
+    if (entry.defaultIffLine !== params.position.line || !entry.defaultIff) {
+      continue;
+    }
+    try {
+      const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+      const iffEntry = getEffectiveIffTable(searchDirs).get(entry.defaultIff.toLowerCase());
+      return {
+        contents: {
+          kind: "markdown",
+          value: iffEntry?.nameLocation
+            ? `**$Default IFF: ${entry.defaultIff}** ✓\n\nDefined at:\n\`${describeResolvedSource(iffEntry.nameLocation.resolved)}:${iffEntry.nameLocation.line + 1}\``
+            : `**$Default IFF: ${entry.defaultIff}** ⚠️\n\nNot found in iff_defs.tbl along the active mod's search path.`,
+        },
+      };
+    } catch {
+      // Fall through to the generic per-line hover below.
+    }
+  }
+
   const ships = shipEntriesByUri.get(params.textDocument.uri) ?? [];
 
   const shipAtNameLine = ships.find((s) => s.nameLine === params.position.line);
@@ -1181,6 +1417,23 @@ connection.onHover((params): Hover | null => {
             value: entry?.nameLocation
               ? `**$Species: ${ship.species}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
               : `**$Species: ${ship.species}** ⚠️\n\nNot found in species_defs.tbl along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    if (ship.aiClassLine === params.position.line && ship.aiClass) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry = getEffectiveAiClassTable(searchDirs).get(ship.aiClass.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**$AI Class: ${ship.aiClass}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**$AI Class: ${ship.aiClass}** ⚠️\n\nNot found in ai.tbl along the active mod's search path.`,
           },
         };
       } catch {
