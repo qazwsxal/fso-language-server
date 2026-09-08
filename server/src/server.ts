@@ -47,7 +47,8 @@ import { buildEffectiveAsteroidTable, EffectiveAsteroidEntry } from "./tableAnal
 import { extractFireballEntries } from "./tableAnalysis/fireballEntries";
 import {
   buildEffectiveFireballTable,
-  collectUniqueIdFireballNames,
+  resolveFireballReference,
+  collectFireballUniqueIds,
   EffectiveFireballEntry,
 } from "./tableAnalysis/mergedFireballTable";
 import { extractMedalEntries } from "./tableAnalysis/medalsEntries";
@@ -295,7 +296,7 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       }
       try {
         const searchDirs = buildSearchPath(fileURLToPath(documentUri));
-        const entry = getEffectiveFireballTable(searchDirs).get(token.name.toLowerCase());
+        const entry = resolveFireballReference(getEffectiveFireballTable(searchDirs), token.name);
         return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
       } catch {
         return null;
@@ -908,32 +909,30 @@ function computeAiClassDiagnostics(documentUri: string, ships: ShipEntryInfo[]):
 
 /**
  * Cross-table check: a ship's `$Explosion Animations:` list should name fireball.tbl
- * entries. Live-verified against fireballs.cpp's `fireball_info_lookup()`: it matches
- * only against a fireball.tbl entry's `unique_id` field, which is auto-generated (not
- * derived from `$Name:`) for a `$Name:`-only entry - so only `$Unique ID:`-keyed
- * fireball.tbl entries are checked against (see collectUniqueIdFireballNames() doc
- * comment).
+ * entries. Live-verified against fireballs.cpp/parselo.cpp: a bare integer resolves by
+ * position in the effective `Fireball_info` vector, a quoted string by `unique_id`
+ * (explicit or auto-generated) - see resolveFireballReference().
  */
 function computeExplosionAnimationDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
   const diagnostics: ParseDiagnostic[] = [];
-  let validNames: Set<string> | null = null;
+  let fireballTable: Map<string, EffectiveFireballEntry> | null = null;
 
   for (const ship of ships) {
     if (ship.explosionAnimations.length === 0 || ship.explosionAnimationsLine === null) {
       continue;
     }
     try {
-      if (!validNames) {
+      if (!fireballTable) {
         const searchDirs = buildSearchPath(fileURLToPath(documentUri));
-        validNames = new Set(collectUniqueIdFireballNames(getEffectiveFireballTable(searchDirs)).map((n) => n.toLowerCase()));
+        fireballTable = getEffectiveFireballTable(searchDirs);
       }
       for (const name of ship.explosionAnimations) {
-        if (!validNames.has(name.toLowerCase())) {
+        if (!resolveFireballReference(fireballTable, name)) {
           diagnostics.push({
             line: ship.explosionAnimationsLine,
             startCol: 0,
             endCol: 1000,
-            message: `$Explosion Animations: references "${name}" which was not found as a $Unique ID: in fireball.tbl (checked across the active mod's search path)`,
+            message: `$Explosion Animations: references "${name}" which was not found as a fireball.tbl entry (by numeric index or $Unique ID:) along the active mod's search path`,
             severity: "warning",
           });
         }
@@ -1478,7 +1477,7 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
     if (range) {
       try {
         const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
-        const names = collectUniqueIdFireballNames(getEffectiveFireballTable(searchDirs)).sort();
+        const names = collectFireballUniqueIds(getEffectiveFireballTable(searchDirs)).sort();
         return names.map((name) => ({
           label: name,
           kind: CompletionItemKind.EnumMember,
@@ -2122,16 +2121,14 @@ connection.onHover((params): Hover | null => {
     if (ship.explosionAnimationsLine === params.position.line && ship.explosionAnimations.length > 0) {
       try {
         const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
-        const validNames = new Set(
-          collectUniqueIdFireballNames(getEffectiveFireballTable(searchDirs)).map((n) => n.toLowerCase()),
-        );
+        const fireballTable = getEffectiveFireballTable(searchDirs);
         const items = ship.explosionAnimations
-          .map((n) => `\`${n}\`${validNames.has(n.toLowerCase()) ? " ✓" : " ⚠️"}`)
+          .map((n) => `\`${n}\`${resolveFireballReference(fireballTable, n) ? " ✓" : " ⚠️"}`)
           .join(", ");
         return {
           contents: {
             kind: "markdown",
-            value: `**$Explosion Animations:**\n\n${items}\n\n(checked against fireball.tbl $Unique ID: entries along the active mod's search path)`,
+            value: `**$Explosion Animations:**\n\n${items}\n\n(checked against fireball.tbl entries - numeric index or $Unique ID: - along the active mod's search path)`,
           },
         };
       } catch {
