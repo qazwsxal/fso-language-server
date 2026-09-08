@@ -9,6 +9,7 @@ import {
   ResolvedFile,
 } from "../modResolution/resolver";
 import { SourceLocation } from "./sourceLocation";
+import { FieldMapEntry, applyNamedFieldRefs } from "./fieldMapMerge";
 
 export interface EffectiveWeaponEntry {
   name: string;
@@ -18,6 +19,12 @@ export interface EffectiveWeaponEntry {
   allLocations: SourceLocation[];
   modelFile: string | null;
   modelFileSource: string | null;
+  damageType: string | null;
+  damageTypeSource: string | null;
+  /** One entry per sound-referencing field actually set by any layer (e.g. "impactsnd" -> {value, source}) - see fieldMapMerge.ts. */
+  soundsByField: Map<string, FieldMapEntry>;
+  /** Same shape as soundsByField, for texture/animation-referencing fields. */
+  texturesByField: Map<string, FieldMapEntry>;
   /** Every file that touched this entry, in application order (base .tbl first, then .tbm layers lowest-to-highest priority). */
   layerSources: string[];
 }
@@ -87,6 +94,10 @@ function applyLayer(result: Map<string, EffectiveWeaponEntry>, resolved: Resolve
         allLocations: [],
         modelFile: null,
         modelFileSource: null,
+        damageType: null,
+        damageTypeSource: null,
+        soundsByField: new Map(),
+        texturesByField: new Map(),
         layerSources: [],
       };
 
@@ -96,6 +107,12 @@ function applyLayer(result: Map<string, EffectiveWeaponEntry>, resolved: Resolve
       merged.modelFile = entry.modelFile;
       merged.modelFileSource = sourceLabel;
     }
+    if (entry.damageType) {
+      merged.damageType = entry.damageType;
+      merged.damageTypeSource = sourceLabel;
+    }
+    applyNamedFieldRefs(merged.soundsByField, entry.soundRefs, sourceLabel);
+    applyNamedFieldRefs(merged.texturesByField, entry.textureRefs, sourceLabel);
     merged.layerSources = [...merged.layerSources, sourceLabel];
 
     result.set(key, merged);

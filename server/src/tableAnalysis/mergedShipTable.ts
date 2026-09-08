@@ -9,6 +9,7 @@ import {
   ResolvedFile,
 } from "../modResolution/resolver";
 import { SourceLocation } from "./sourceLocation";
+import { FieldMapEntry, applyNamedFieldRefs } from "./fieldMapMerge";
 
 export interface EffectiveShipEntry {
   name: string;
@@ -28,6 +29,18 @@ export interface EffectiveShipEntry {
   armorTypeSource: string | null;
   shieldArmorType: string | null;
   shieldArmorTypeSource: string | null;
+  species: string | null;
+  speciesSource: string | null;
+  aiClass: string | null;
+  aiClassSource: string | null;
+  targetPriorityGroups: string[];
+  targetPriorityGroupsSource: string | null;
+  explosionAnimations: string[];
+  explosionAnimationsSource: string | null;
+  /** One entry per sound-referencing field actually set by any layer (e.g. "enginesnd" -> {value, source}) - see fieldMapMerge.ts. */
+  soundsByField: Map<string, FieldMapEntry>;
+  /** Same shape as soundsByField, for texture/animation-referencing fields. */
+  texturesByField: Map<string, FieldMapEntry>;
   /** Every file that touched this entry, in application order (base .tbl first, then .tbm layers lowest-to-highest priority). */
   layerSources: string[];
 }
@@ -110,6 +123,16 @@ function applyLayer(result: Map<string, EffectiveShipEntry>, resolved: ResolvedF
         armorTypeSource: null,
         shieldArmorType: null,
         shieldArmorTypeSource: null,
+        species: null,
+        speciesSource: null,
+        aiClass: null,
+        aiClassSource: null,
+        targetPriorityGroups: [],
+        targetPriorityGroupsSource: null,
+        explosionAnimations: [],
+        explosionAnimationsSource: null,
+        soundsByField: new Map(),
+        texturesByField: new Map(),
         layerSources: [],
       };
 
@@ -140,6 +163,24 @@ function applyLayer(result: Map<string, EffectiveShipEntry>, resolved: ResolvedF
       merged.shieldArmorType = entry.shieldArmorType;
       merged.shieldArmorTypeSource = sourceLabel;
     }
+    if (entry.species) {
+      merged.species = entry.species;
+      merged.speciesSource = sourceLabel;
+    }
+    if (entry.aiClass) {
+      merged.aiClass = entry.aiClass;
+      merged.aiClassSource = sourceLabel;
+    }
+    if (entry.targetPriorityGroups.length > 0) {
+      merged.targetPriorityGroups = entry.targetPriorityGroups;
+      merged.targetPriorityGroupsSource = sourceLabel;
+    }
+    if (entry.explosionAnimations.length > 0) {
+      merged.explosionAnimations = entry.explosionAnimations;
+      merged.explosionAnimationsSource = sourceLabel;
+    }
+    applyNamedFieldRefs(merged.soundsByField, entry.soundRefs, sourceLabel);
+    applyNamedFieldRefs(merged.texturesByField, entry.textureRefs, sourceLabel);
     merged.layerSources = [...merged.layerSources, sourceLabel];
 
     result.set(key, merged);

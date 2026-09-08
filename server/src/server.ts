@@ -30,6 +30,7 @@ import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef
 import { buildEffectiveShipTable, EffectiveShipEntry } from "./tableAnalysis/mergedShipTable";
 import { extractWeaponEntries, WeaponEntryInfo, WeaponTextureRef } from "./tableAnalysis/weaponEntries";
 import { buildEffectiveWeaponsTable, collectDisplayWeaponNames, EffectiveWeaponEntry } from "./tableAnalysis/mergedWeaponsTable";
+import { renderEffectiveShipEntry, renderEffectiveWeaponEntry } from "./tableAnalysis/effectiveEntryFormatter";
 import {
   buildEffectiveArmorTable,
   collectAllDamageTypes,
@@ -2453,6 +2454,42 @@ connection.onRequest(
     return null;
   },
 );
+
+/**
+ * Given a document URI + line (a ship's/weapon's own `$Name:` line), builds and renders
+ * that entry's full "effective definition" - every field this project tracks
+ * structurally, synthesized across every layer applied along the active mod's search
+ * path (see effectiveEntryFormatter.ts's doc comments for exactly what's covered and
+ * what isn't). Backs the "Show effective definition" hover link (a client-side hover
+ * provider mirroring the POF viewer's `openPofViewerAtPosition` pattern - see
+ * client/src/extension.ts) via a synthesized `fso-tbl-effective:` virtual document, the
+ * same round-trip shape `fso-lsp/readVpEntryText` already uses for `fso-tbl-vp:` above.
+ * Always returns a string (never null) - an in-band `;;` comment on failure, matching
+ * readVpEntryText's own "not found" convention, so the client's content provider doesn't
+ * need a separate error path.
+ */
+connection.onRequest("fso-lsp/getEffectiveEntryText", (params: { uri: string; line: number }): string => {
+  const ship = (shipEntriesByUri.get(params.uri) ?? []).find((s) => s.nameLine === params.line);
+  const weapon = (weaponEntriesByUri.get(params.uri) ?? []).find((w) => w.nameLine === params.line);
+
+  if (!ship && !weapon) {
+    return ";; No ship/weapon $Name: entry found at this position.";
+  }
+
+  try {
+    const searchDirs = buildSearchPath(fileURLToPath(params.uri));
+    if (ship) {
+      const effective = getEffectiveShipTable(searchDirs).get(ship.name.toLowerCase());
+      return effective ? renderEffectiveShipEntry(effective) : `;; "${ship.name}" not found in the merged ships.tbl view.`;
+    }
+    const effective = getEffectiveWeaponsTable(searchDirs).get((weapon as WeaponEntryInfo).name.toLowerCase());
+    return effective
+      ? renderEffectiveWeaponEntry(effective)
+      : `;; "${(weapon as WeaponEntryInfo).name}" not found in the merged weapons.tbl view.`;
+  } catch (err) {
+    return `;; Could not resolve the active mod's search path: ${err instanceof Error ? err.message : String(err)}`;
+  }
+});
 
 documents.listen(connection);
 connection.listen();
