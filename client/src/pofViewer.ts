@@ -10,12 +10,15 @@ export interface SubmodelGeometryPayload {
   normals: number[];
   uvs: number[];
   indices: number[];
+  detailLevel: number;
+  isDebris: boolean;
 }
 
 export interface PofGeometryForSubsystemResult {
   modelFile: string;
   targetSubmodelIndex: number;
   submodels: SubmodelGeometryPayload[];
+  detailLevelCount: number;
 }
 
 /**

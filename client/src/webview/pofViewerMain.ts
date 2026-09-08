@@ -18,6 +18,10 @@ interface SubmodelPayload {
   normals: number[];
   uvs: number[];
   indices: number[];
+  /** Which detail (LOD) level's hierarchy this submodel belongs to (see server/src/pof/classify.ts), or -1 if none (e.g. debris). */
+  detailLevel: number;
+  /** Whether this submodel is (or descends from) a debris piece. */
+  isDebris: boolean;
 }
 
 interface GeometryMessage {
@@ -25,6 +29,8 @@ interface GeometryMessage {
   modelFile: string;
   targetSubmodelIndex: number;
   submodels: SubmodelPayload[];
+  /** Number of detail (LOD) levels this model declares - a detail-level picker is only shown when this is more than 1. */
+  detailLevelCount: number;
 }
 
 /** Sent instead of a full GeometryMessage when re-triggering F12 on a different `$Subsystem:` of the SAME, already-rendered model - see pofViewer.ts's fingerprint() doc comment. */
@@ -50,8 +56,19 @@ let controls: OrbitControls | null = null;
 let currentGroup: THREE.Group | null = null;
 /** The currently-rendered model's meshes, keyed by submodel index - lets applyHighlight() recolor in place instead of rebuilding the scene when only the highlighted subsystem changes. */
 let currentMeshes: Map<number, THREE.Mesh> | null = null;
+/** Same keys as currentMeshes - detail-level/debris classification, used by updateVisibility(). */
+let currentClassifications: Map<number, { detailLevel: number; isDebris: boolean }> | null = null;
 let currentTargetIndex = -1;
 let currentWireframe: THREE.LineSegments | null = null;
+
+/** Which detail level is currently shown (submodels with detailLevel === -1, i.e. not part of any LOD hierarchy, are always shown regardless). */
+let selectedDetailLevel = 0;
+/** Whether debris pieces are currently shown. */
+let showDebris = false;
+
+let controlsPanel: HTMLElement | null = null;
+let detailRadios: HTMLInputElement[] = [];
+let debrisCheckbox: HTMLInputElement | null = null;
 
 function getContainer(): HTMLElement {
   return document.getElementById("viewer-root") as HTMLElement;
@@ -131,6 +148,95 @@ function initSceneIfNeeded(): void {
   animate();
 }
 
+/**
+ * Builds (replacing any previous instance) the floating detail-level/debris controls
+ * overlay for the model just rendered. Real capital ships routinely have several LOD
+ * hulls and dozens of debris pieces all sharing the same space as the actual ship,
+ * which makes it hard to see what you're looking at - these let the user narrow the
+ * view down to one detail level and hide debris (both default to detail level 0 /
+ * debris hidden, which is what the user is normally trying to inspect).
+ */
+function buildControls(detailLevelCount: number, hasDebris: boolean): void {
+  controlsPanel?.remove();
+  detailRadios = [];
+  debrisCheckbox = null;
+
+  if (detailLevelCount <= 1 && !hasDebris) {
+    return; // nothing to control - a simple model with one hull and no debris
+  }
+
+  const panel = document.createElement("div");
+  panel.style.cssText =
+    "position:fixed; top:8px; left:8px; z-index:10; background:rgba(30,30,30,0.85); color:#ddd; " +
+    "font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; padding:8px 10px; border-radius:4px; " +
+    "display:flex; flex-direction:column; gap:4px; user-select:none;";
+
+  if (detailLevelCount > 1) {
+    const label = document.createElement("div");
+    label.textContent = "Detail level";
+    label.style.cssText = "font-weight:600; opacity:0.8;";
+    panel.appendChild(label);
+
+    for (let level = 0; level < detailLevelCount; level++) {
+      const row = document.createElement("label");
+      row.style.cssText = "display:flex; align-items:center; gap:5px; cursor:pointer;";
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = "detail-level";
+      input.value = String(level);
+      input.checked = level === selectedDetailLevel;
+      input.addEventListener("change", () => {
+        if (input.checked) {
+          selectedDetailLevel = level;
+          updateVisibility();
+        }
+      });
+      detailRadios.push(input);
+      row.appendChild(input);
+      row.appendChild(document.createTextNode(`Detail ${level}`));
+      panel.appendChild(row);
+    }
+  }
+
+  if (hasDebris) {
+    const row = document.createElement("label");
+    row.style.cssText = "display:flex; align-items:center; gap:5px; cursor:pointer; margin-top:2px;";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = showDebris;
+    input.addEventListener("change", () => {
+      showDebris = input.checked;
+      updateVisibility();
+    });
+    debrisCheckbox = input;
+    row.appendChild(input);
+    row.appendChild(document.createTextNode("Show debris"));
+    panel.appendChild(row);
+  }
+
+  document.body.appendChild(panel);
+  controlsPanel = panel;
+}
+
+/** Applies selectedDetailLevel/showDebris to every rendered mesh's visibility, plus the highlight wireframe if its target mesh is currently hidden. No geometry/material rebuild, no camera change. */
+function updateVisibility(): void {
+  if (!currentMeshes || !currentClassifications) {
+    return;
+  }
+  for (const [index, mesh] of currentMeshes) {
+    const classification = currentClassifications.get(index);
+    mesh.visible = classification
+      ? classification.isDebris
+        ? showDebris
+        : classification.detailLevel === -1 || classification.detailLevel === selectedDetailLevel
+      : true;
+  }
+  if (currentWireframe) {
+    const targetMesh = currentMeshes.get(currentTargetIndex);
+    currentWireframe.visible = targetMesh ? targetMesh.visible : true;
+  }
+}
+
 function renderGeometry(msg: GeometryMessage): void {
   initSceneIfNeeded();
   if (!scene || !camera || !controls) {
@@ -150,6 +256,7 @@ function renderGeometry(msg: GeometryMessage): void {
 
   const group = new THREE.Group();
   const meshesByIndex = new Map<number, THREE.Mesh>();
+  const classifications = new Map<number, { detailLevel: number; isDebris: boolean }>();
   const offsetCache = new Map<number, [number, number, number]>();
   let boundingRadius = 1;
 
@@ -179,6 +286,7 @@ function renderGeometry(msg: GeometryMessage): void {
     mesh.position.set(worldOffset[0], worldOffset[1], worldOffset[2]);
     group.add(mesh);
     meshesByIndex.set(i, mesh);
+    classifications.set(i, { detailLevel: sm.detailLevel, isDebris: sm.isDebris });
 
     for (let k = 0; k < sm.positions.length; k += 3) {
       const dist = Math.hypot(
@@ -195,8 +303,22 @@ function renderGeometry(msg: GeometryMessage): void {
   scene.add(group);
   currentGroup = group;
   currentMeshes = meshesByIndex;
+  currentClassifications = classifications;
   currentTargetIndex = -1;
   currentWireframe = null;
+
+  // Default to whichever detail level actually contains the target (normally 0, but
+  // stay correct if a subsystem is ever attached elsewhere), and reveal debris only if
+  // the target itself is a debris piece - otherwise default to detail 0 / debris
+  // hidden, which is what makes a real capital ship's many stacked LOD hulls and debris
+  // chunks actually legible.
+  const targetClassification = classifications.get(msg.targetSubmodelIndex);
+  selectedDetailLevel = targetClassification && targetClassification.detailLevel >= 0 ? targetClassification.detailLevel : 0;
+  showDebris = targetClassification?.isDebris ?? false;
+
+  const hasDebris = Array.from(classifications.values()).some((c) => c.isDebris);
+  buildControls(msg.detailLevelCount, hasDebris);
+  updateVisibility();
   applyHighlight(msg.targetSubmodelIndex);
 
   camera.position.set(boundingRadius * 1.5, boundingRadius * 1.2, boundingRadius * 1.5);
@@ -213,9 +335,37 @@ function renderGeometry(msg: GeometryMessage): void {
  * different `$Subsystem:` of the same, already-open model update in place instead of
  * visibly "reloading" (which previously also reset the user's camera angle/zoom every
  * time - see pofViewer.ts's fingerprint()-based dispatch).
+ *
+ * Also switches the active detail-level/debris-visibility selection if needed so the
+ * newly-highlighted submodel is actually visible - otherwise F12'ing a subsystem that
+ * happens to live on a currently-hidden detail level (or a debris piece, while debris
+ * is hidden) would silently highlight something the user can't see.
  */
 function applyHighlight(targetSubmodelIndex: number): void {
-  if (!scene || !currentGroup || !currentMeshes || targetSubmodelIndex === currentTargetIndex) {
+  if (!scene || !currentGroup || !currentMeshes) {
+    return;
+  }
+
+  const classification = currentClassifications?.get(targetSubmodelIndex);
+  let visibilityChanged = false;
+  if (classification) {
+    if (classification.detailLevel >= 0 && classification.detailLevel !== selectedDetailLevel) {
+      selectedDetailLevel = classification.detailLevel;
+      const radio = detailRadios[classification.detailLevel];
+      if (radio) radio.checked = true;
+      visibilityChanged = true;
+    }
+    if (classification.isDebris && !showDebris) {
+      showDebris = true;
+      if (debrisCheckbox) debrisCheckbox.checked = true;
+      visibilityChanged = true;
+    }
+  }
+  if (visibilityChanged) {
+    updateVisibility();
+  }
+
+  if (targetSubmodelIndex === currentTargetIndex) {
     return;
   }
 
@@ -242,6 +392,7 @@ function applyHighlight(targetSubmodelIndex: number): void {
     const wireGeo = new THREE.WireframeGeometry(target.geometry);
     currentWireframe = new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color: 0xffffff }));
     currentWireframe.position.copy(target.position);
+    currentWireframe.visible = target.visible;
     currentGroup.add(currentWireframe);
   }
 

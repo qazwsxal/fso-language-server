@@ -59,6 +59,8 @@ export function parsePof(buffer: Buffer): PofModel {
     turretMissileBanks: [],
     autocenterPoint: null,
     insigniaCount: 0,
+    detailLevelRootSubmodels: [],
+    debrisSubmodels: [],
     unhandledChunkIds: [],
   };
 
@@ -133,6 +135,13 @@ export function parsePof(buffer: Buffer): PofModel {
         case "INSG":
           model.insigniaCount = reader.readInt32();
           break;
+        case "OHDR":
+        case "HDR2": {
+          const header = readHeader(reader, chunkId as "OHDR" | "HDR2");
+          model.detailLevelRootSubmodels = header.detailLevelRootSubmodels;
+          model.debrisSubmodels = header.debrisSubmodels;
+          break;
+        }
         default:
           unhandled.add(chunkId);
           break;
@@ -147,6 +156,46 @@ export function parsePof(buffer: Buffer): PofModel {
 
   model.unhandledChunkIds = Array.from(unhandled);
   return model;
+}
+
+/**
+ * Field order confirmed against FSO's modelread.cpp (ID_OHDR/ID_HDR2 case): the two
+ * chunk IDs read the same three leading fields in a DIFFERENT order (OHDR:
+ * n_models/rad/flags; HDR2: rad/flags/n_models) before converging on the same
+ * mins/maxs vectors, `n_detail_levels` + that many detail-level root submodel indices,
+ * then `num_debris_objects` + that many debris-piece submodel indices. Only the
+ * detail-level/debris arrays are exposed on PofModel - everything else in this chunk
+ * (radius, mass, moment of inertia, ...) isn't needed by any current feature.
+ */
+function readHeader(
+  reader: BinaryReader,
+  chunkId: "OHDR" | "HDR2",
+): { detailLevelRootSubmodels: number[]; debrisSubmodels: number[] } {
+  if (chunkId === "OHDR") {
+    reader.skip(4); // n_models
+    reader.skip(4); // rad
+    reader.skip(4); // flags
+  } else {
+    reader.skip(4); // rad
+    reader.skip(4); // flags
+    reader.skip(4); // n_models
+  }
+  reader.skipVector(); // mins
+  reader.skipVector(); // maxs
+
+  const detailLevelRootSubmodels: number[] = [];
+  const nDetailLevels = reader.readInt32();
+  for (let i = 0; i < nDetailLevels && reader.canRead(4); i++) {
+    detailLevelRootSubmodels.push(reader.readInt32());
+  }
+
+  const debrisSubmodels: number[] = [];
+  const numDebrisObjects = reader.readInt32();
+  for (let i = 0; i < numDebrisObjects && reader.canRead(4); i++) {
+    debrisSubmodels.push(reader.readInt32());
+  }
+
+  return { detailLevelRootSubmodels, debrisSubmodels };
 }
 
 function readTextures(reader: BinaryReader, chunkEnd: number): string[] {

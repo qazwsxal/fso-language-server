@@ -52,6 +52,7 @@ import {
 import { loadPofCached, clearPofCache } from "./pofCache";
 import { PofModel } from "./pof/types";
 import { decodeSubmodelGeometry } from "./pof/geometry";
+import { classifySubmodels } from "./pof/classify";
 import { buildTextureIndex } from "./textureIndex";
 import { readVpIndex, readVpEntry } from "./vp/reader";
 
@@ -1633,6 +1634,10 @@ interface SubmodelGeometryPayload {
   normals: number[];
   uvs: number[];
   indices: number[];
+  /** Which detail (LOD) level's hierarchy this submodel belongs to (see pof/classify.ts), or -1 if none (e.g. debris). */
+  detailLevel: number;
+  /** Whether this submodel is (or descends from) a debris piece. */
+  isDebris: boolean;
 }
 
 interface PofGeometryForSubsystemResult {
@@ -1640,6 +1645,8 @@ interface PofGeometryForSubsystemResult {
   /** Index into `submodels` matching the requested `$Subsystem:` name (case-insensitive), or -1 if no submodel name matched. */
   targetSubmodelIndex: number;
   submodels: SubmodelGeometryPayload[];
+  /** Number of detail (LOD) levels this model declares - lets the client decide whether to show a detail-level picker at all. */
+  detailLevelCount: number;
 }
 
 /**
@@ -1667,8 +1674,10 @@ connection.onRequest(
         return null;
       }
 
+      const classifications = classifySubmodels(pof);
       const submodels: SubmodelGeometryPayload[] = pof.subobjects.map((s) => {
         const geo = decodeSubmodelGeometry(s.bspData);
+        const classification = classifications.get(s.submodelNumber);
         return {
           name: s.name ?? `submodel_${s.submodelNumber}`,
           parentIndex: pof.subobjects.findIndex((p) => p.submodelNumber === s.parentSubmodel),
@@ -1677,6 +1686,8 @@ connection.onRequest(
           normals: geo.normals,
           uvs: geo.uvs,
           indices: geo.indices,
+          detailLevel: classification?.detailLevel ?? -1,
+          isDebris: classification?.isDebris ?? false,
         };
       });
 
@@ -1684,7 +1695,7 @@ connection.onRequest(
         (s) => (s.name ?? "").toLowerCase() === subsystem.name.toLowerCase(),
       );
 
-      return { modelFile: ship.modelFile, targetSubmodelIndex, submodels };
+      return { modelFile: ship.modelFile, targetSubmodelIndex, submodels, detailLevelCount: pof.detailLevelRootSubmodels.length };
     }
 
     return null;

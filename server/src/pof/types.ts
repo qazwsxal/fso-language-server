@@ -80,6 +80,15 @@ export interface PofModel {
   autocenterPoint: { x: number; y: number; z: number } | null;
   /** Count only from INSG (squad insignia decal meshes) - unnamed/index-referenced, so a count is all that's useful here. */
   insigniaCount: number;
+  /**
+   * Submodel indices, one per detail (LOD) level, most-detailed first - from the
+   * OHDR/HDR2 header chunk's `detail[]` array (confirmed against modelread.cpp). Each
+   * is the root of a complete standalone hull hierarchy the engine swaps to based on
+   * camera distance; index 0 is what's normally shown up close.
+   */
+  detailLevelRootSubmodels: number[];
+  /** Submodel indices for debris pieces (post-destruction hull chunks) - from the OHDR/HDR2 header chunk's `debris_objects[]` array. */
+  debrisSubmodels: number[];
   /** Chunk IDs present that this reader doesn't decode (informational, e.g. for diagnostics/telemetry). */
   unhandledChunkIds: string[];
 }
