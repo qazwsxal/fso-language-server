@@ -63,8 +63,41 @@ export interface ShipEntryInfo {
   /** From `$AI Class:` - references an ai.tbl `$Name:` entry (e.g. "Rookie", "Insane"). Ship-level only. */
   aiClass: string | null;
   aiClassLine: number | null;
+  /**
+   * From `$Explosion Animations:` - references fireball.tbl entries via `fireball_info_lookup()`.
+   * Confirmed (live-verified against fireballs.cpp): the lookup matches ONLY against each
+   * fireball.tbl entry's `unique_id` field - which is either explicitly set via
+   * `$Unique ID:`, or auto-generated (`fireball_generate_unique_id()`, something like
+   * `"Custom Fireball %d"`) for a `$Name:`-only entry. The auto-generated id is NOT
+   * derived from `$Name:` at all, so a fireball.tbl entry that only specifies `$Name:`
+   * is not meaningfully referenceable from here - only `$Unique ID:`-keyed entries
+   * should be checked against. Ship-level only.
+   */
+  explosionAnimations: string[];
+  explosionAnimationsLine: number | null;
+  /**
+   * From `$Target Priority Groups:` - references objecttypes.tbl entries. Confirmed
+   * (live-verified against ship.cpp): matched via `stricmp()` against `Ai_tp_list[].name`,
+   * which is populated ONLY by `parse_ai_target_priorities()` under objecttypes.tbl's
+   * `#Target Priorities` section - NOT `#Weapon Targeting Priorities` (a same-named field
+   * reused at the ship-type level under `#Ship Types`, per the same shared-field-name-at-
+   * multiple-structural-levels pattern already confirmed for `$Default PBanks:`/
+   * `$Default SBanks:` - see ShipSubsystemRef's doc comment). Ship-level only.
+   */
+  targetPriorityGroups: string[];
+  targetPriorityGroupsLine: number | null;
   /** Bitmap/animation-referencing fields, confirmed against ship.cpp's field list. */
   textureRefs: ShipTextureRef[];
+  /**
+   * Sound-referencing fields (ship-level and per-subsystem alike, e.g. `$EngineSnd:`,
+   * `$AliveSnd:` inside a `$Subsystem:` block) - confirmed (live-verified against
+   * ship.cpp/gamesnd.cpp, see [[fso-gamesnd-lookup]] project memory) that every one of
+   * these resolves via `parse_game_sound()` against sounds.tbl's Game Sounds section
+   * only (never Interface/Flyby/Environment sounds). Reuses ShipTextureRef's shape
+   * (sigil/field/line/value) since the "does this name exist in some index" cross-check
+   * is identical in form to a texture reference, just against a different index.
+   */
+  soundRefs: ShipTextureRef[];
   /** Modular-table-only sentinels (see fso-table-format): only relevant when merging .tbm layers. */
   noCreate: boolean;
   remove: boolean;
@@ -81,6 +114,62 @@ const TEXTURE_FIELDS = new Set([
   "briefing icon with cargo",
   "briefing wing icon",
   "briefing wing icon with cargo",
+]);
+
+/**
+ * Every ships.tbl field confirmed (see [[fso-gamesnd-lookup]] project memory) to resolve
+ * a sound name via `parse_game_sound()`/`parse_ship_sound()` - ship-level and
+ * per-subsystem fields both included, matched by key alone regardless of sigil ($/+)
+ * since `+Ambient Sound:`/`+Collision Sound Light:`/`+Collision Sound Heavy:` are each
+ * confirmed to appear twice, under two different parent blocks, with identical spelling.
+ */
+const SOUND_FIELDS = new Set([
+  "enginesnd",
+  "glidestartsnd",
+  "glideendsnd",
+  "flyby sound",
+  "landing sound",
+  "collision sound light",
+  "collision sound heavy",
+  "collision sound shielded",
+  "ambient sound",
+  "explosion sound",
+  "autoaim lock snd",
+  "autoaim lost snd",
+  "shockwave sound",
+  "startsnd",
+  "loopsnd",
+  "stopsnd",
+  "cockpitenginesnd",
+  "fullthrottlesnd",
+  "zerothrottlesnd",
+  "throttleupsnd",
+  "throttledownsnd",
+  "afterburnersnd",
+  "afterburnerengagesnd",
+  "afterburnerfailedsnd",
+  "missiletrackingsnd",
+  "missilelockedsnd",
+  "primarycyclesnd",
+  "secondarycyclesnd",
+  "targetacquiredsnd",
+  "primaryfirefailedsnd",
+  "secondaryfirefailedsnd",
+  "heatseekerlaunchwarningsnd",
+  "aspectseekerlaunchwarningsnd",
+  "missilelockwarningsnd",
+  "heatseekerproximitywarningsnd",
+  "aspectseekerproximitywarningsnd",
+  "missileevadedsnd",
+  "cargoscanningsnd",
+  "deathrollsnd",
+  "explosionsnd",
+  "subsysexplosionsnd",
+  "alivesnd",
+  "deadsnd",
+  "rotationsnd",
+  "turret base rotationsnd",
+  "turret gun rotationsnd",
 ]);
 
 /** Extracts per-ship model-file + subsystem-reference info from a parsed ships.tbl/*-shp.tbm. */
@@ -114,7 +203,12 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           speciesLine: null,
           aiClass: null,
           aiClassLine: null,
+          explosionAnimations: [],
+          explosionAnimationsLine: null,
+          targetPriorityGroups: [],
+          targetPriorityGroupsLine: null,
           textureRefs: [],
+          soundRefs: [],
           noCreate: false,
           remove: false,
         };
@@ -127,7 +221,20 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
         continue;
       }
 
+      if (TEXTURE_FIELDS.has(key) && field.value.trim()) {
+        current.textureRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
+      }
+
+      if (SOUND_FIELDS.has(key) && field.value.trim()) {
+        current.soundRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
+      }
+
       if (field.sigil === "+") {
+        // Several confirmed sound fields (+Ambient Sound:/+Landing Sound:/etc. - see
+        // fso-gamesnd-lookup project memory) use the "+" sigil, so the texture/sound-ref
+        // capture above MUST run before this branch's `continue` - an earlier version
+        // had it after, which meant every "+"-sigil sound field was silently never
+        // captured at all (caught by a unit test, not by hand-inspection).
         if (key === "nocreate") {
           current.noCreate = true;
         } else if (key === "remove") {
@@ -142,10 +249,6 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
         currentSubsystem = { line: field.line, raw: field.value, name, defaultPrimaryBanks: null, defaultSecondaryBanks: null };
         current.subsystems.push(currentSubsystem);
         continue;
-      }
-
-      if (TEXTURE_FIELDS.has(key) && field.value.trim()) {
-        current.textureRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
       }
 
       if (inSubsystemScope) {
@@ -180,6 +283,12 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
       } else if (key === "ai class") {
         current.aiClass = field.value.trim();
         current.aiClassLine = field.line;
+      } else if (key === "explosion animations") {
+        current.explosionAnimations = splitNameList(field.value);
+        current.explosionAnimationsLine = field.line;
+      } else if (key === "target priority groups") {
+        current.targetPriorityGroups = splitNameList(field.value);
+        current.targetPriorityGroupsLine = field.line;
       }
     }
   }
@@ -201,6 +310,27 @@ function splitBankList(value: string): string[] {
   return value
     .replace(/[()]/g, "")
     .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * Parses a `( "Name" "Name" ... )`-style parenthesized name list, same convention as
+ * splitBankList() (both go through FSO's generic `stuff_int_list()`/name-lookup-list
+ * reader, just with a different `ParseLookupType`), for fields whose members aren't
+ * weapon names. Fallback splits on comma OR whitespace (unlike splitBankList's
+ * comma-only fallback), since these lists' quoting convention isn't confirmed and a
+ * bare `( Fighter Bomber )`-style unquoted, whitespace-separated list is plausible for
+ * short identifier-style names.
+ */
+function splitNameList(value: string): string[] {
+  const quoted = [...value.matchAll(/"([^"]*)"/g)].map((m) => m[1].trim());
+  if (quoted.length > 0) {
+    return quoted;
+  }
+  return value
+    .replace(/[()]/g, "")
+    .split(/[,\s]+/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }

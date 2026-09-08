@@ -19,6 +19,15 @@ export interface WeaponEntryInfo {
   damageTypeLine: number | null;
   /** Bitmap/animation-referencing fields, confirmed against weapons.cpp's field list and a real weapons.tbl. */
   textureRefs: WeaponTextureRef[];
+  /**
+   * Sound-referencing fields - confirmed (live-verified against weapons.cpp/gamesnd.cpp,
+   * see [[fso-gamesnd-lookup]] project memory) that every one of these resolves via
+   * `parse_game_sound()` against sounds.tbl's Game Sounds section only. Matched by key
+   * alone regardless of sigil: `$Shockwave Sound:`/`+Shockwave Sound:` are the same
+   * field name used for the main vs. "dinky" shockwave (two call sites, same
+   * `parse_shockwave_info()` function, `pre_char` = `"$"`/`"+"`).
+   */
+  soundRefs: WeaponTextureRef[];
   /** Modular-table-only sentinels (see fso-table-format): only relevant when merging .tbm layers. */
   noCreate: boolean;
   remove: boolean;
@@ -37,6 +46,29 @@ const PLUS_TEXTURE_FIELDS = new Set(["tech anim"]);
  * prefix on the value)" - it's actually the field's own sigil, not a value prefix.
  */
 const AT_TEXTURE_FIELDS = new Set(["laser bitmap", "laser glow"]);
+
+/** Every weapons.tbl field confirmed (see [[fso-gamesnd-lookup]] project memory) to resolve a sound name via `parse_game_sound()`, matched by key regardless of sigil. */
+const SOUND_FIELDS = new Set([
+  "prelaunchsnd",
+  "launchsnd",
+  "cockpitlaunchsnd",
+  "impactsnd",
+  "disarmed impactsnd",
+  "shield impactsnd",
+  "flybysnd",
+  "ambientsnd",
+  "startfiringsnd",
+  "loopfiringsnd",
+  "linkedloopfiringsnd",
+  "endfiringsnd",
+  "trackingsnd",
+  "lockedsnd",
+  "inflightsnd",
+  "beamsound",
+  "warmupsound",
+  "warmdownsound",
+  "shockwave sound",
+]);
 
 /** Extracts per-weapon model-file info from a parsed weapons.tbl/*-wep.tbm. */
 export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[] {
@@ -61,6 +93,7 @@ export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[
           damageType: null,
           damageTypeLine: null,
           textureRefs: [],
+          soundRefs: [],
           noCreate: false,
           remove: false,
         };
@@ -78,6 +111,8 @@ export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[
           current.remove = true;
         } else if (PLUS_TEXTURE_FIELDS.has(key) && field.value.trim()) {
           current.textureRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
+        } else if (SOUND_FIELDS.has(key) && field.value.trim()) {
+          current.soundRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
         }
         continue;
       }
@@ -97,6 +132,8 @@ export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[
         current.damageTypeLine = field.line;
       } else if (DOLLAR_TEXTURE_FIELDS.has(key) && field.value.trim()) {
         current.textureRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
+      } else if (SOUND_FIELDS.has(key) && field.value.trim()) {
+        current.soundRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
       }
     }
   }

@@ -1,6 +1,6 @@
 import { TableSection } from "../parser";
 
-export interface AiClassEntryInfo {
+export interface AsteroidEntryInfo {
   name: string;
   nameLine: number;
   /** Modular-table-only sentinels (see fso-table-format): only relevant when merging .tbm layers. */
@@ -8,13 +8,13 @@ export interface AiClassEntryInfo {
   remove: boolean;
 }
 
-/** Extracts per-AI-class name info from a parsed ai.tbl/*-aic.tbm (see aiClasses.ts schema). */
-export function extractAiClassEntries(sections: TableSection[]): AiClassEntryInfo[] {
-  const entries: AiClassEntryInfo[] = [];
-  let current: AiClassEntryInfo | null = null;
+/** Extracts per-asteroid-type name info from a parsed asteroid.tbl/*-ast.tbm (see asteroid.ts schema). */
+export function extractAsteroidEntries(sections: TableSection[]): AsteroidEntryInfo[] {
+  const entries: AsteroidEntryInfo[] = [];
+  let current: AsteroidEntryInfo | null = null;
 
   for (const section of sections) {
-    if (section.name.trim().toLowerCase() !== "ai classes") {
+    if (section.name.trim().toLowerCase() !== "asteroid types") {
       continue;
     }
 

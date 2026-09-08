@@ -42,6 +42,34 @@ import { extractSpeciesEntries, SpeciesEntryInfo } from "./tableAnalysis/species
 import { buildEffectiveSpeciesTable, collectDisplaySpeciesNames, EffectiveSpeciesEntry } from "./tableAnalysis/mergedSpeciesTable";
 import { buildEffectiveAiClassTable, collectDisplayAiClassNames, EffectiveAiClassEntry } from "./tableAnalysis/mergedAiClassTable";
 import { buildEffectiveIffTable, collectDisplayIffNames, EffectiveIffEntry } from "./tableAnalysis/mergedIffTable";
+import { extractAsteroidEntries } from "./tableAnalysis/asteroidEntries";
+import { buildEffectiveAsteroidTable, EffectiveAsteroidEntry } from "./tableAnalysis/mergedAsteroidTable";
+import { extractFireballEntries } from "./tableAnalysis/fireballEntries";
+import {
+  buildEffectiveFireballTable,
+  collectUniqueIdFireballNames,
+  EffectiveFireballEntry,
+} from "./tableAnalysis/mergedFireballTable";
+import { extractMedalEntries } from "./tableAnalysis/medalsEntries";
+import { buildEffectiveMedalsTable, EffectiveMedalEntry } from "./tableAnalysis/mergedMedalsTable";
+import { extractRankEntries } from "./tableAnalysis/rankEntries";
+import { buildEffectiveRankTable, EffectiveRankEntry } from "./tableAnalysis/mergedRankTable";
+import { extractAiProfileEntries } from "./tableAnalysis/aiProfilesEntries";
+import { buildEffectiveAiProfilesTable, EffectiveAiProfileEntry } from "./tableAnalysis/mergedAiProfilesTable";
+import { extractSoundEntries } from "./tableAnalysis/soundsEntries";
+import {
+  buildEffectiveSoundsTable,
+  collectDisplayNamesForKind as soundsDisplayNamesForKind,
+  EffectiveSoundEntry,
+  mapKey as soundsMapKey,
+} from "./tableAnalysis/mergedSoundsTable";
+import { extractObjectTypeEntries } from "./tableAnalysis/objectTypesEntries";
+import {
+  buildEffectiveObjectTypesTable,
+  collectDisplayNamesForKind as objectTypesDisplayNamesForKind,
+  EffectiveObjectTypeEntry,
+  mapKey as objectTypesMapKey,
+} from "./tableAnalysis/mergedObjectTypesTable";
 import {
   buildSearchPath,
   resolveModelFile,
@@ -258,6 +286,13 @@ connection.onDidChangeWatchedFiles(() => {
   effectiveSpeciesTableCache.clear();
   effectiveAiClassTableCache.clear();
   effectiveIffTableCache.clear();
+  effectiveAsteroidTableCache.clear();
+  effectiveFireballTableCache.clear();
+  effectiveMedalsTableCache.clear();
+  effectiveRankTableCache.clear();
+  effectiveAiProfilesTableCache.clear();
+  effectiveSoundsTableCache.clear();
+  effectiveObjectTypesTableCache.clear();
   textureIndexCache.clear();
   textureNamesSortedCache.clear();
 });
@@ -280,9 +315,12 @@ function validateAndPublish(document: TextDocument): void {
   const armorTypeDiagnostics = computeArmorTypeDiagnostics(document.uri, ships);
   const speciesDiagnostics = computeSpeciesDiagnostics(document.uri, ships);
   const aiClassDiagnostics = computeAiClassDiagnostics(document.uri, ships);
+  const explosionAnimationDiagnostics = computeExplosionAnimationDiagnostics(document.uri, ships);
+  const targetPriorityGroupsDiagnostics = computeTargetPriorityGroupsDiagnostics(document.uri, ships);
   const iffDiagnostics = computeIffDiagnostics(document.uri, species);
   const damageTypeDiagnostics = computeDamageTypeDiagnostics(document.uri, weapons);
   const textureDiagnostics = computeTextureDiagnostics(document.uri, ships, weapons);
+  const soundDiagnostics = computeSoundDiagnostics(document.uri, ships, weapons);
 
   const diagnostics: LspDiagnostic[] = [
     ...result.diagnostics,
@@ -293,9 +331,12 @@ function validateAndPublish(document: TextDocument): void {
     ...armorTypeDiagnostics,
     ...speciesDiagnostics,
     ...aiClassDiagnostics,
+    ...explosionAnimationDiagnostics,
+    ...targetPriorityGroupsDiagnostics,
     ...iffDiagnostics,
     ...damageTypeDiagnostics,
     ...textureDiagnostics,
+    ...soundDiagnostics,
   ].map((d) => ({
     severity: d.severity === "error" ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
     range: {
@@ -505,6 +546,59 @@ function getEffectiveIffTable(searchDirs: string[]): Map<string, EffectiveIffEnt
 }
 
 /**
+ * Caches of the remaining merged/effective table views, mirroring the ship/weapons/
+ * armor/species/aiClass/iff caches above. These tables have no confirmed cross-reference
+ * field in shipEntries.ts/weaponEntries.ts yet (unlike armor/species/ai.tbl/iff_defs.tbl,
+ * nothing in the currently-extracted ship/weapon fields points at asteroid.tbl,
+ * fireball.tbl, medals.tbl, rank.tbl, sounds.tbl, objecttypes.tbl, or ai_profiles.tbl -
+ * per project feedback, fabricating an unverified cross-reference field isn't worth the
+ * risk), so they're only wired up for self-hover (see findSelfHover()) - showing the
+ * merge provenance for whichever entry the cursor is on when a document of that table
+ * type is open - rather than the fuller hover/completion/definition treatment ships and
+ * weapons get.
+ */
+const effectiveAsteroidTableCache = new Map<string, Map<string, EffectiveAsteroidEntry>>();
+const effectiveFireballTableCache = new Map<string, Map<string, EffectiveFireballEntry>>();
+const effectiveMedalsTableCache = new Map<string, Map<string, EffectiveMedalEntry>>();
+const effectiveRankTableCache = new Map<string, Map<string, EffectiveRankEntry>>();
+const effectiveAiProfilesTableCache = new Map<string, Map<string, EffectiveAiProfileEntry>>();
+const effectiveSoundsTableCache = new Map<string, Map<string, EffectiveSoundEntry>>();
+const effectiveObjectTypesTableCache = new Map<string, Map<string, EffectiveObjectTypeEntry>>();
+
+function cachedTable<T>(cache: Map<string, Map<string, T>>, searchDirs: string[], build: (dirs: string[]) => Map<string, T>): Map<string, T> {
+  const key = searchDirs.join("|");
+  const cached = cache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const table = build(searchDirs);
+  cache.set(key, table);
+  return table;
+}
+
+function getEffectiveAsteroidTable(searchDirs: string[]): Map<string, EffectiveAsteroidEntry> {
+  return cachedTable(effectiveAsteroidTableCache, searchDirs, buildEffectiveAsteroidTable);
+}
+function getEffectiveFireballTable(searchDirs: string[]): Map<string, EffectiveFireballEntry> {
+  return cachedTable(effectiveFireballTableCache, searchDirs, buildEffectiveFireballTable);
+}
+function getEffectiveMedalsTable(searchDirs: string[]): Map<string, EffectiveMedalEntry> {
+  return cachedTable(effectiveMedalsTableCache, searchDirs, buildEffectiveMedalsTable);
+}
+function getEffectiveRankTable(searchDirs: string[]): Map<string, EffectiveRankEntry> {
+  return cachedTable(effectiveRankTableCache, searchDirs, buildEffectiveRankTable);
+}
+function getEffectiveAiProfilesTable(searchDirs: string[]): Map<string, EffectiveAiProfileEntry> {
+  return cachedTable(effectiveAiProfilesTableCache, searchDirs, buildEffectiveAiProfilesTable);
+}
+function getEffectiveSoundsTable(searchDirs: string[]): Map<string, EffectiveSoundEntry> {
+  return cachedTable(effectiveSoundsTableCache, searchDirs, buildEffectiveSoundsTable);
+}
+function getEffectiveObjectTypesTable(searchDirs: string[]): Map<string, EffectiveObjectTypeEntry> {
+  return cachedTable(effectiveObjectTypesTableCache, searchDirs, buildEffectiveObjectTypesTable);
+}
+
+/**
  * Cache of the texture/animation basename index (see textureIndex.ts), keyed by the
  * joined search-path directory list - same cache-key convention as the merged-table
  * caches above.
@@ -692,6 +786,86 @@ function computeAiClassDiagnostics(documentUri: string, ships: ShipEntryInfo[]):
 }
 
 /**
+ * Cross-table check: a ship's `$Explosion Animations:` list should name fireball.tbl
+ * entries. Live-verified against fireballs.cpp's `fireball_info_lookup()`: it matches
+ * only against a fireball.tbl entry's `unique_id` field, which is auto-generated (not
+ * derived from `$Name:`) for a `$Name:`-only entry - so only `$Unique ID:`-keyed
+ * fireball.tbl entries are checked against (see collectUniqueIdFireballNames() doc
+ * comment).
+ */
+function computeExplosionAnimationDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let validNames: Set<string> | null = null;
+
+  for (const ship of ships) {
+    if (ship.explosionAnimations.length === 0 || ship.explosionAnimationsLine === null) {
+      continue;
+    }
+    try {
+      if (!validNames) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        validNames = new Set(collectUniqueIdFireballNames(getEffectiveFireballTable(searchDirs)).map((n) => n.toLowerCase()));
+      }
+      for (const name of ship.explosionAnimations) {
+        if (!validNames.has(name.toLowerCase())) {
+          diagnostics.push({
+            line: ship.explosionAnimationsLine,
+            startCol: 0,
+            endCol: 1000,
+            message: `$Explosion Animations: references "${name}" which was not found as a $Unique ID: in fireball.tbl (checked across the active mod's search path)`,
+            severity: "warning",
+          });
+        }
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Cross-table check: a ship's `$Target Priority Groups:` list should name objecttypes.tbl
+ * entries. Live-verified against ship.cpp: matched via `stricmp()` against
+ * `Ai_tp_list[].name`, which is populated ONLY from objecttypes.tbl's `#Target
+ * Priorities` section (confirmed NOT from `#Weapon Targeting Priorities`, despite both
+ * sections sharing the same `Ai_tp_list`-lookup-adjacent naming).
+ */
+function computeTargetPriorityGroupsDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let validNames: Set<string> | null = null;
+
+  for (const ship of ships) {
+    if (ship.targetPriorityGroups.length === 0 || ship.targetPriorityGroupsLine === null) {
+      continue;
+    }
+    try {
+      if (!validNames) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const objectTypesTable = getEffectiveObjectTypesTable(searchDirs);
+        validNames = new Set(objectTypesDisplayNamesForKind(objectTypesTable, "target-priorities").map((n) => n.toLowerCase()));
+      }
+      for (const name of ship.targetPriorityGroups) {
+        if (!validNames.has(name.toLowerCase())) {
+          diagnostics.push({
+            line: ship.targetPriorityGroupsLine,
+            startCol: 0,
+            endCol: 1000,
+            message: `$Target Priority Groups: references "${name}" which was not found in objecttypes.tbl's #Target Priorities section (checked across the active mod's search path)`,
+            severity: "warning",
+          });
+        }
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
  * Cross-table check: a species' `$Default IFF:` should name an iff_defs.tbl
  * `$IFF Name:` entry (e.g. "Friendly", "Hostile"). Only meaningful when a
  * species_defs.tbl/*-sdf.tbm is the document actually open, since that's the only place
@@ -853,6 +1027,51 @@ function computeTextureDiagnostics(
           startCol: 0,
           endCol: 1000,
           message: `${ref.sigil}${ref.field}: texture/animation "${ref.value}" not found along the active mod's search path (data/maps, data/effects, data/hud, data/interface, data/cbanims)`,
+          severity: "warning",
+        });
+      }
+    } catch {
+      // Can't resolve a search path for this document - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Flags any ship/weapon sound-referencing field (see SOUND_FIELDS in
+ * shipEntries.ts/weaponEntries.ts) whose value can't be found in sounds.tbl. Live-verified
+ * (see [[fso-gamesnd-lookup]] project memory) that every one of these fields resolves via
+ * `parse_game_sound()` against sounds.tbl's Game Sounds section specifically - not
+ * Interface/Flyby/Environment sounds, and not a unified list across all four.
+ */
+function computeSoundDiagnostics(documentUri: string, ships: ShipEntryInfo[], weapons: WeaponEntryInfo[]): ParseDiagnostic[] {
+  const allRefs: { sigil: "$" | "+" | "@"; field: string; line: number; value: string }[] = [
+    ...ships.flatMap((s) => s.soundRefs),
+    ...weapons.flatMap((w) => w.soundRefs),
+  ];
+  if (allRefs.length === 0) {
+    return [];
+  }
+
+  let validNames: Set<string> | null = null;
+  const diagnostics: ParseDiagnostic[] = [];
+
+  for (const ref of allRefs) {
+    if (ref.value.toLowerCase() === "<none>" || ref.value === "" || ref.value === "-1") {
+      continue;
+    }
+    try {
+      if (!validNames) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        validNames = new Set(soundsDisplayNamesForKind(getEffectiveSoundsTable(searchDirs), "game").map((n) => n.toLowerCase()));
+      }
+      if (!validNames.has(ref.value.toLowerCase())) {
+        diagnostics.push({
+          line: ref.line,
+          startCol: 0,
+          endCol: 1000,
+          message: `${ref.sigil}${ref.field}: "${ref.value}" was not found in sounds.tbl's Game Sounds section (checked across the active mod's search path)`,
           severity: "warning",
         });
       }
@@ -1089,6 +1308,43 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
     }
   }
 
+  if (/^\s*\$Explosion\s+Animations\s*:/i.test(linePrefix)) {
+    const range = computeOpenBankTokenRange(doc, params.position);
+    if (range) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const names = collectUniqueIdFireballNames(getEffectiveFireballTable(searchDirs)).sort();
+        return names.map((name) => ({
+          label: name,
+          kind: CompletionItemKind.EnumMember,
+          filterText: name,
+          textEdit: { range, newText: name },
+        }));
+      } catch {
+        return [];
+      }
+    }
+  }
+
+  if (/^\s*\$Target\s+Priority\s+Groups\s*:/i.test(linePrefix)) {
+    const range = computeOpenBankTokenRange(doc, params.position);
+    if (range) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const objectTypesTable = getEffectiveObjectTypesTable(searchDirs);
+        const names = objectTypesDisplayNamesForKind(objectTypesTable, "target-priorities").sort();
+        return names.map((name) => ({
+          label: name,
+          kind: CompletionItemKind.EnumMember,
+          filterText: name,
+          textEdit: { range, newText: name },
+        }));
+      } catch {
+        return [];
+      }
+    }
+  }
+
   const textureFieldMatch = /^\s*[$+@]([A-Za-z_][A-Za-z0-9 _]*?)\s*:\s*\S*$/.exec(linePrefix);
   if (textureFieldMatch) {
     const fieldKey = textureFieldMatch[1].trim().toLowerCase();
@@ -1101,6 +1357,22 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
         return names.map((name) => ({
           label: name,
           kind: CompletionItemKind.File,
+          filterText: name,
+          textEdit: { range, newText: name },
+        }));
+      } catch {
+        return [];
+      }
+    }
+
+    if (SOUND_FIELD_KEYS.has(fieldKey)) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const names = soundsDisplayNamesForKind(getEffectiveSoundsTable(searchDirs), "game").sort();
+        const range = computeLineValueRange(doc, params.position.line);
+        return names.map((name) => ({
+          label: name,
+          kind: CompletionItemKind.EnumMember,
           filterText: name,
           textEdit: { range, newText: name },
         }));
@@ -1214,6 +1486,80 @@ const SHIP_TEXTURE_FIELD_KEYS = new Set([
 ]);
 const WEAPON_TEXTURE_FIELD_KEYS = new Set(["hud image", "laser bitmap", "laser glow", "icon", "anim", "tech anim"]);
 
+/**
+ * Every ships.tbl/weapons.tbl field key confirmed (see [[fso-gamesnd-lookup]] project
+ * memory) to resolve a sound name via `parse_game_sound()` - mirrors SOUND_FIELDS in
+ * shipEntries.ts/weaponEntries.ts (kept as a separate constant here, same pattern as
+ * SHIP_TEXTURE_FIELD_KEYS/WEAPON_TEXTURE_FIELD_KEYS above, since this drives completion
+ * triggering rather than extraction).
+ */
+const SOUND_FIELD_KEYS = new Set([
+  "enginesnd",
+  "glidestartsnd",
+  "glideendsnd",
+  "flyby sound",
+  "landing sound",
+  "collision sound light",
+  "collision sound heavy",
+  "collision sound shielded",
+  "ambient sound",
+  "explosion sound",
+  "autoaim lock snd",
+  "autoaim lost snd",
+  "shockwave sound",
+  "startsnd",
+  "loopsnd",
+  "stopsnd",
+  "cockpitenginesnd",
+  "fullthrottlesnd",
+  "zerothrottlesnd",
+  "throttleupsnd",
+  "throttledownsnd",
+  "afterburnersnd",
+  "afterburnerengagesnd",
+  "afterburnerfailedsnd",
+  "missiletrackingsnd",
+  "missilelockedsnd",
+  "primarycyclesnd",
+  "secondarycyclesnd",
+  "targetacquiredsnd",
+  "primaryfirefailedsnd",
+  "secondaryfirefailedsnd",
+  "heatseekerlaunchwarningsnd",
+  "aspectseekerlaunchwarningsnd",
+  "missilelockwarningsnd",
+  "heatseekerproximitywarningsnd",
+  "aspectseekerproximitywarningsnd",
+  "missileevadedsnd",
+  "cargoscanningsnd",
+  "deathrollsnd",
+  "explosionsnd",
+  "subsysexplosionsnd",
+  "alivesnd",
+  "deadsnd",
+  "rotationsnd",
+  "turret base rotationsnd",
+  "turret gun rotationsnd",
+  "prelaunchsnd",
+  "launchsnd",
+  "cockpitlaunchsnd",
+  "impactsnd",
+  "disarmed impactsnd",
+  "shield impactsnd",
+  "flybysnd",
+  "ambientsnd",
+  "startfiringsnd",
+  "loopfiringsnd",
+  "linkedloopfiringsnd",
+  "endfiringsnd",
+  "trackingsnd",
+  "lockedsnd",
+  "inflightsnd",
+  "beamsound",
+  "warmupsound",
+  "warmdownsound",
+]);
+
 function formatBankLine(
   label: "Primary" | "Secondary",
   bankList: { weaponNames: string[] } | null,
@@ -1257,7 +1603,154 @@ function findTextureHover(
   }
 }
 
+/**
+ * Hover for a ship/weapon sound-referencing field (see SOUND_FIELDS in
+ * shipEntries.ts/weaponEntries.ts) - mirrors findTextureHover()'s shape, but resolves
+ * against the merged sounds.tbl "game" kind instead of the texture index (see
+ * [[fso-gamesnd-lookup]] project memory for why it's always "game").
+ */
+function findSoundHover(documentUri: string, refs: (ShipTextureRef | WeaponTextureRef)[], line: number): Hover | null {
+  const ref = refs.find((r) => r.line === line);
+  if (!ref) {
+    return null;
+  }
+  try {
+    const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+    const soundsTable = getEffectiveSoundsTable(searchDirs);
+    const entry = soundsTable.get(soundsMapKey("game", ref.value));
+    return {
+      contents: {
+        kind: "markdown",
+        value: entry?.nameLocation
+          ? `**${ref.sigil}${ref.field}: ${ref.value}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+          : `**${ref.sigil}${ref.field}: ${ref.value}** ⚠️\n\nNot found in sounds.tbl's Game Sounds section along the active mod's search path.`,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Renders the same "effective, merge provenance" hover shape used for ship/weapon self-hover, generalized for the simpler single-string-identity tables below. */
+function formatEffectiveEntryHover(label: string, name: string, layerSources: string[]): Hover {
+  const layers = layerSources.map((s, i) => `${i + 1}. \`${s}\``).join("\n");
+  return {
+    contents: {
+      kind: "markdown",
+      value: `**${label}: ${name}** (effective, across the active mod's search path)\n\nLayers applied (base first, later wins):\n${layers}`,
+    },
+  };
+}
+
+/**
+ * Self-hover (on the entry's own identity line) for the merged tables that don't yet
+ * have a confirmed cross-reference field to hang richer hover/completion/definition off
+ * of - see the effectiveAsteroidTableCache doc comment above. Shows the same
+ * "effective, across every applied .tbm layer" provenance ships/weapons get, just
+ * without the model/texture/bank-list extras those two have.
+ */
+function findAuxiliaryTableSelfHover(documentUri: string, line: number): Hover | null {
+  const result = parsedByUri.get(documentUri);
+  if (!result) {
+    return null;
+  }
+
+  let searchDirs: string[] | null = null;
+  const getSearchDirs = (): string[] => searchDirs ?? (searchDirs = buildSearchPath(fileURLToPath(documentUri)));
+
+  const asteroid = extractAsteroidEntries(result.sections).find((e) => e.nameLine === line);
+  if (asteroid) {
+    try {
+      const entry = getEffectiveAsteroidTable(getSearchDirs()).get(asteroid.name.toLowerCase());
+      if (entry) {
+        return formatEffectiveEntryHover("$Name", entry.name, entry.layerSources);
+      }
+    } catch {
+      // Can't resolve a search path for this document - fall through.
+    }
+  }
+
+  const fireball = extractFireballEntries(result.sections).find((e) => e.nameLine === line);
+  if (fireball) {
+    try {
+      const entry = getEffectiveFireballTable(getSearchDirs()).get(fireball.name.toLowerCase());
+      if (entry) {
+        return formatEffectiveEntryHover(fireball.keyedByUniqueId ? "$Unique ID" : "$Name", entry.name, entry.layerSources);
+      }
+    } catch {
+      // Can't resolve a search path for this document - fall through.
+    }
+  }
+
+  const medal = extractMedalEntries(result.sections).find((e) => e.nameLine === line);
+  if (medal) {
+    try {
+      const entry = getEffectiveMedalsTable(getSearchDirs()).get(medal.name.toLowerCase());
+      if (entry) {
+        return formatEffectiveEntryHover("$Name", entry.name, entry.layerSources);
+      }
+    } catch {
+      // Can't resolve a search path for this document - fall through.
+    }
+  }
+
+  const rank = extractRankEntries(result.sections).find((e) => e.nameLine === line);
+  if (rank) {
+    try {
+      const entry = getEffectiveRankTable(getSearchDirs()).get(rank.name.toLowerCase());
+      if (entry) {
+        return formatEffectiveEntryHover("$Name", entry.name, entry.layerSources);
+      }
+    } catch {
+      // Can't resolve a search path for this document - fall through.
+    }
+  }
+
+  const aiProfile = extractAiProfileEntries(result.sections).find((e) => e.nameLine === line);
+  if (aiProfile) {
+    try {
+      const entry = getEffectiveAiProfilesTable(getSearchDirs()).get(aiProfile.name.toLowerCase());
+      if (entry) {
+        return formatEffectiveEntryHover("$Profile Name", entry.name, entry.layerSources);
+      }
+    } catch {
+      // Can't resolve a search path for this document - fall through.
+    }
+  }
+
+  const sound = extractSoundEntries(result.sections).find((e) => e.nameLine === line);
+  if (sound) {
+    try {
+      const entry = getEffectiveSoundsTable(getSearchDirs()).get(soundsMapKey(sound.kind, sound.name));
+      if (entry) {
+        return formatEffectiveEntryHover(`$Name (${sound.kind} sound)`, entry.name, entry.layerSources);
+      }
+    } catch {
+      // Can't resolve a search path for this document - fall through.
+    }
+  }
+
+  const objectType = extractObjectTypeEntries(result.sections).find((e) => e.nameLine === line);
+  if (objectType) {
+    try {
+      const entry = getEffectiveObjectTypesTable(getSearchDirs()).get(objectTypesMapKey(objectType.kind, objectType.name));
+      if (entry) {
+        return formatEffectiveEntryHover(`$Name (${objectType.kind})`, entry.name, entry.layerSources);
+      }
+    } catch {
+      // Can't resolve a search path for this document - fall through.
+    }
+  }
+
+  return null;
+}
+
 connection.onHover((params): Hover | null => {
+  const auxiliaryHover = findAuxiliaryTableSelfHover(params.textDocument.uri, params.position.line);
+  if (auxiliaryHover) {
+    return auxiliaryHover;
+  }
+
   const hoverDoc = documents.get(params.textDocument.uri);
   const weapons = weaponEntriesByUri.get(params.textDocument.uri) ?? [];
 
@@ -1299,6 +1792,15 @@ connection.onHover((params): Hover | null => {
   );
   if (weaponTextureHover) {
     return weaponTextureHover;
+  }
+
+  const weaponSoundHover = findSoundHover(
+    params.textDocument.uri,
+    weapons.flatMap((w) => w.soundRefs),
+    params.position.line,
+  );
+  if (weaponSoundHover) {
+    return weaponSoundHover;
   }
 
   for (const weapon of weapons) {
@@ -1386,6 +1888,15 @@ connection.onHover((params): Hover | null => {
     return shipTextureHover;
   }
 
+  const shipSoundHover = findSoundHover(
+    params.textDocument.uri,
+    ships.flatMap((s) => s.soundRefs),
+    params.position.line,
+  );
+  if (shipSoundHover) {
+    return shipSoundHover;
+  }
+
   for (const ship of ships) {
     if ((ship.armorTypeLine === params.position.line && ship.armorType) ||
         (ship.shieldArmorTypeLine === params.position.line && ship.shieldArmorType)) {
@@ -1436,6 +1947,45 @@ connection.onHover((params): Hover | null => {
             value: entry?.nameLocation
               ? `**$AI Class: ${ship.aiClass}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
               : `**$AI Class: ${ship.aiClass}** ⚠️\n\nNot found in ai.tbl along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    if (ship.explosionAnimationsLine === params.position.line && ship.explosionAnimations.length > 0) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const validNames = new Set(
+          collectUniqueIdFireballNames(getEffectiveFireballTable(searchDirs)).map((n) => n.toLowerCase()),
+        );
+        const items = ship.explosionAnimations
+          .map((n) => `\`${n}\`${validNames.has(n.toLowerCase()) ? " ✓" : " ⚠️"}`)
+          .join(", ");
+        return {
+          contents: {
+            kind: "markdown",
+            value: `**$Explosion Animations:**\n\n${items}\n\n(checked against fireball.tbl $Unique ID: entries along the active mod's search path)`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    if (ship.targetPriorityGroupsLine === params.position.line && ship.targetPriorityGroups.length > 0) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const objectTypesTable = getEffectiveObjectTypesTable(searchDirs);
+        const validNames = new Set(objectTypesDisplayNamesForKind(objectTypesTable, "target-priorities").map((n) => n.toLowerCase()));
+        const items = ship.targetPriorityGroups
+          .map((n) => `\`${n}\`${validNames.has(n.toLowerCase()) ? " ✓" : " ⚠️"}`)
+          .join(", ");
+        return {
+          contents: {
+            kind: "markdown",
+            value: `**$Target Priority Groups:**\n\n${items}\n\n(checked against objecttypes.tbl's #Target Priorities section along the active mod's search path)`,
           },
         };
       } catch {

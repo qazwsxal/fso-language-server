@@ -3,16 +3,19 @@ import { TableSchema } from "./types";
 /**
  * sounds.tbl / *-snd.tbm schema.
  *
- * Least-confident schema in this directory: sounds.tbl entries are commonly keyed by
- * a numeric sound-index string (e.g. `$Name: 1`) rather than a descriptive name, and
- * this reader hasn't confirmed the exact field set/order against gamesnd.cpp. Kept
- * deliberately minimal so it flags almost nothing rather than risking false positives
- * on a table shape this project is least sure about.
+ * Section wrappers confirmed (fso-table-fields-reference project memory,
+ * `gamesnd.cpp`): sounds.tbl has multiple independent named sections, each its own
+ * distinctly-named Start/End pair - not a single `#Game Sounds`/`#End` pair (an earlier
+ * guess that meant this schema matched nothing in a real file, since the parser now
+ * models table-specific close tokens like `#Game Sounds End` too - see parser.ts). Field
+ * set/order within each section is still not confirmed against source, so this stays
+ * deliberately minimal (identity field only) to avoid false positives on a shape this
+ * project is least sure about.
  */
 export const soundsSchema: TableSchema = {
   name: "sounds.tbl",
   fileMatch: [/(^|[\\/])sounds\.tbl$/i, /-snd\.tbm$/i],
-  sectionNames: ["Game Sounds"],
+  sectionNames: ["Game Sounds Start", "Interface Sounds Start", "Flyby Sounds Start", "Sound Environments Start"],
   entryKeyField: "Name",
   fieldOrder: ["Name", "Filename"],
 };
