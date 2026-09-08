@@ -269,9 +269,6 @@ export function decodeSubmodelGeometry(bspData: Buffer | null | undefined): Subm
           case OP_TMAPPOLY:
             parseTmapPoly(pos);
             break;
-          case OP_TMAP2POLY:
-            parseTmap2Poly(pos);
-            break;
           case OP_BOUNDBOX:
             break; // bounding box only - no geometry to extract
           case OP_SORTNORM: {
@@ -288,25 +285,41 @@ export function decodeSubmodelGeometry(bspData: Buffer | null | undefined): Subm
             break;
           }
           case OP_SORTNORM2: {
-            // NOTE: modelread.cpp's swap_bsp_sortnorm2() reads frontlist/backlist as
-            // ints at +8/+12 but then *also* reinterprets bytes starting at +8 as a
-            // bounding-box vec3d, which overlaps those same bytes - almost certainly
-            // dead/unmaintained code (both OP_SORTNORM2 and OP_TMAP2POLY are marked
-            // "should not continue after this chunk" in that function, suggesting
-            // they're not produced/exercised in practice). We only trust the
-            // front/backlist-as-ints reading here since recursing into the tree is
-            // what actually matters for geometry; if this turns out wrong for a real
-            // file, the defensive bounds checks below mean it degrades to a missing
-            // branch rather than corrupting anything.
+            // modelread.cpp's swap_bsp_sortnorm2() is BIG_ENDIAN-only dead code and
+            // misleadingly reads bmin/bmax starting at +8 (overlapping frontlist/
+            // backlist) - but the code that actually WALKS this tree for real use
+            // (modelinterp.cpp's submodel_get_num_polys_sub() and
+            // modelcollide.cpp's model_collide_parse_bsp(), both confirmed from
+            // source) agrees: frontlist is a real int at +8, backlist at +12, and
+            // bmin/bmax vec3ds follow at +16/+28 - no overlap. Both of those real
+            // walkers also confirm this opcode DOES recurse into front/back (unlike a
+            // leaf), but - like OP_TMAP2POLY below - is terminal for the CURRENT list:
+            // "should not continue after this chunk" in both source functions means
+            // stop this list's own iteration, not "don't recurse".
+            //
+            // The original version of this decoder recursed into front/back correctly
+            // but ALSO fell through to `pos += size` and kept iterating the current
+            // list - so a node already fully covered by the explicit front/back
+            // recursion got walked AGAIN via the outer list's own continuation. Every
+            // level of a real (often deeply nested) BSP tree compounds this, and
+            // against a real Blue Planet capital ship (UEFg_Karuna.pof) it inflated
+            // every single submodel to ~200,000+ implausible triangles regardless of
+            // its actual BSP data size - enough, across ~150 submodels, to OOM the LSP
+            // server on a single F12/ctrl+click.
             const frontlist = readInt32(bspData, pos + 8);
             const backlist = readInt32(bspData, pos + 12);
-            for (const rel of [backlist, frontlist]) {
+            for (const rel of [frontlist, backlist]) {
               if (rel !== null && rel !== 0) {
                 walkList(pos + rel, depth + 1);
               }
             }
-            break;
+            return;
           }
+          case OP_TMAP2POLY:
+            // Same "should not continue after this chunk" terminal behavior as
+            // OP_SORTNORM2 above - confirmed in the same dispatcher function.
+            parseTmap2Poly(pos);
+            return;
           default:
             // Unknown opcode - stop this list defensively rather than risk misreading
             // `size` for a format we don't recognize.

@@ -5,6 +5,52 @@ import { decodeSubmodelGeometry } from "../src/pof/geometry";
 const OP_EOF = 0;
 const OP_DEFPOINTS = 1;
 const OP_TMAPPOLY = 3;
+const OP_SORTNORM2 = 7;
+
+/** Builds a single-triangle TMAPPOLY node (44-byte header + 3*12-byte vert array) referencing `vertnums`, all normnum 0, all uv (0,0). */
+function buildTriangleTmapPoly(vertnums: [number, number, number]): Buffer {
+  const vertsBuf = Buffer.alloc(3 * 12);
+  for (let i = 0; i < 3; i++) {
+    vertsBuf.writeUInt16LE(vertnums[i], i * 12);
+    vertsBuf.writeUInt16LE(0, i * 12 + 2);
+  }
+  const header = Buffer.alloc(44);
+  header.writeInt32LE(OP_TMAPPOLY, 0);
+  header.writeInt32LE(44 + vertsBuf.length, 4);
+  header.writeUInt32LE(3, 36);
+  return Buffer.concat([header, vertsBuf]);
+}
+
+function buildEof(): Buffer {
+  const eof = Buffer.alloc(8);
+  eof.writeInt32LE(OP_EOF, 0);
+  eof.writeInt32LE(8, 4);
+  return eof;
+}
+
+/** A DEFPOINTS block with `count` vertices at arbitrary positions, one normal each (all +Z), no faces referencing normals in a way that matters for these tests. */
+function buildDefpoints(count: number): Buffer {
+  const dataOffset = 20 + count;
+  const header = Buffer.alloc(dataOffset);
+  header.writeInt32LE(OP_DEFPOINTS, 0);
+  header.writeInt32LE(count, 8);
+  header.writeInt32LE(count, 12);
+  header.writeInt32LE(dataOffset, 16);
+  for (let i = 0; i < count; i++) header.writeUInt8(1, 20 + i);
+
+  const vertexBlockParts: Buffer[] = [];
+  for (let i = 0; i < count; i++) {
+    const posBuf = Buffer.alloc(12);
+    posBuf.writeFloatLE(i, 0);
+    vertexBlockParts.push(posBuf);
+    const nBuf = Buffer.alloc(12);
+    nBuf.writeFloatLE(1, 8);
+    vertexBlockParts.push(nBuf);
+  }
+  const vertexBlock = Buffer.concat(vertexBlockParts);
+  header.writeInt32LE(dataOffset + vertexBlock.length, 4);
+  return Buffer.concat([header, vertexBlock]);
+}
 
 /**
  * Builds a synthetic BSP polygon blob by hand, byte-for-byte matching the layout
@@ -231,4 +277,88 @@ test("decodeSubmodelGeometry fan-triangulates a triangle (n=3) as a single trian
   const geo = decodeSubmodelGeometry(bspData);
   assert.equal(geo.triangleCount, 1);
   assert.equal(geo.positions.length, 9);
+});
+
+test("decodeSubmodelGeometry counts an OP_SORTNORM2 branch's two children exactly once each, not doubled", () => {
+  // Regression test: reported as an out-of-memory crash on ctrl+click, reproduced
+  // against a real Blue Planet capital ship (UEFg_Karuna.pof) where EVERY submodel -
+  // regardless of its real BSP data size, from ~4KB up to ~770KB - decoded to a
+  // wildly implausible ~200,000+ triangles. Traced to OP_SORTNORM2: the real FSO engine
+  // (modelinterp.cpp's submodel_get_num_polys_sub(), modelcollide.cpp's
+  // model_collide_parse_bsp() - both confirmed against source) recurses into this
+  // node's frontlist(+8)/backlist(+12) children, but is then TERMINAL for the
+  // enclosing list ("should not continue after this chunk" in both source functions) -
+  // it does NOT also fall through and keep iterating the current list afterward. A
+  // prior version of this decoder recursed into front/back correctly but ALSO
+  // continued the current list past the SORTNORM2 node, re-walking whatever came right
+  // after it as if it were an ordinary sibling - which happened to be the very node(s)
+  // just reached via the explicit recursion, double-counting them. Every level of a
+  // real (often deeply nested) BSP tree compounds this multiplicatively.
+  //
+  // Layout: DEFPOINTS(6 verts) -> SORTNORM2 (header only; front points at a triangle
+  // A placed right after it, back points at a second triangle B placed after A) -> the
+  // outer list must NOT be re-entered past the SORTNORM2 node. Correct output: exactly
+  // 2 triangles (1 from A + 1 from B). The old bug would additionally re-process node A
+  // as a bogus "next sibling" of the SORTNORM2 node, yielding 3.
+  const defpoints = buildDefpoints(6);
+  const nodeA = buildTriangleTmapPoly([0, 1, 2]);
+  const eofA = buildEof();
+  const nodeB = buildTriangleTmapPoly([3, 4, 5]);
+  const eofB = buildEof();
+
+  const sortnormStart = defpoints.length;
+  const nodeAStart = sortnormStart + 40; // sortnorm2 header is 40 bytes (type+size+frontlist+backlist+bmin+bmax)
+  const nodeBStart = nodeAStart + nodeA.length + eofA.length;
+
+  const sortnorm2 = Buffer.alloc(40);
+  sortnorm2.writeInt32LE(OP_SORTNORM2, 0);
+  sortnorm2.writeInt32LE(40, 4); // this node's own size covers only its header - children are reached via absolute recursion, matching real compiled data (see geometry.ts's OP_SORTNORM2 doc comment)
+  sortnorm2.writeInt32LE(nodeAStart - sortnormStart, 8); // frontlist
+  sortnorm2.writeInt32LE(nodeBStart - sortnormStart, 12); // backlist
+
+  const bspData = Buffer.concat([defpoints, sortnorm2, nodeA, eofA, nodeB, eofB]);
+  const geo = decodeSubmodelGeometry(bspData);
+
+  assert.equal(geo.triangleCount, 2, `expected exactly 2 triangles (1 per SORTNORM2 branch), got ${geo.triangleCount}`);
+});
+
+test("decodeSubmodelGeometry does not blow up on a deeply nested chain of OP_SORTNORM2 branches", () => {
+  // Same bug as above, but stress-tested at depth: if the "continue the outer list
+  // after SORTNORM2" bug were reintroduced, each of these levels would double the
+  // effective visitation count of everything below it, turning `depth` leaf triangles
+  // into up to 2^depth - a real capital ship's nesting depth was enough to threaten an
+  // out-of-memory crash from a single ctrl+click.
+  const depth = 12;
+  const leafCount = depth + 1;
+  const defpoints = buildDefpoints(leafCount * 3);
+
+  // Build leaves first (one triangle each), then nest SORTNORM2 branches back-to-front
+  // so each branch's "front" is a real leaf and its "back" is the previously-built
+  // subtree - a deep, unbalanced chain.
+  const leaves: Buffer[] = [];
+  for (let i = 0; i < leafCount; i++) {
+    leaves.push(Buffer.concat([buildTriangleTmapPoly([i * 3, i * 3 + 1, i * 3 + 2]), buildEof()]));
+  }
+
+  // Assemble back-to-front: start with the last leaf as the initial "subtree", then
+  // wrap it in a SORTNORM2 with the next leaf up as "front", repeatedly.
+  let subtree = leaves[leafCount - 1];
+  for (let i = leafCount - 2; i >= 0; i--) {
+    const front = leaves[i];
+    // Layout for this level: [sortnorm2 header(40)][front][subtree]
+    const nodeStart = 0; // relative to this sortnorm2 node itself once placed
+    const frontStart = 40;
+    const backStart = 40 + front.length;
+    const header = Buffer.alloc(40);
+    header.writeInt32LE(OP_SORTNORM2, 0);
+    header.writeInt32LE(40, 4);
+    header.writeInt32LE(frontStart - nodeStart, 8);
+    header.writeInt32LE(backStart - nodeStart, 12);
+    subtree = Buffer.concat([header, front, subtree]);
+  }
+
+  const bspData = Buffer.concat([defpoints, subtree]);
+  const geo = decodeSubmodelGeometry(bspData);
+
+  assert.equal(geo.triangleCount, leafCount, `expected exactly ${leafCount} triangles (one per leaf), got ${geo.triangleCount}`);
 });
