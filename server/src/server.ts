@@ -156,11 +156,11 @@ function toDefinitionLocation(loc: SourceLocation): Location {
 }
 
 /**
- * Finds the sound ref (if any) at `line` within a ship's/weapon's `soundRefs` list - the
- * same shape findSoundHover() matches on, reused here so go-to-definition and hover agree
- * on what counts as "on" a sound-referencing field.
+ * Finds the ref (if any) at `line` within a ship's/weapon's `soundRefs`/`textureRefs`
+ * list - the same shape findSoundHover()/findTextureHover() match on, reused here so
+ * go-to-definition and hover agree on what counts as "on" a one-value-per-line field.
  */
-function findSoundRefAtLine(refs: (ShipTextureRef | WeaponTextureRef)[], line: number): ShipTextureRef | WeaponTextureRef | undefined {
+function findRefAtLine(refs: (ShipTextureRef | WeaponTextureRef)[], line: number): ShipTextureRef | WeaponTextureRef | undefined {
   return refs.find((r) => r.line === line);
 }
 
@@ -185,11 +185,52 @@ function resolveSoundDefinition(documentUri: string, value: string): Location[] 
 }
 
 /**
- * Go-to-definition/declaration: handles a ship's `$Armor Type:`/`$Shield Armor Type:`
- * (-> the matching armor.tbl `$Name:` line), a ship's/weapon's sound-referencing fields
- * (-> the matching sounds.tbl `$Name:` line - see [[fso-gamesnd-lookup]]), and a weapon's
- * `$Damage Type:` (-> every armor.tbl `$Damage Type:` line that references it, since
- * unlike a name there's no single "the" definition for a shared damage-type tag).
+ * Resolves a texture/animation-referencing field's value to the file that defines it,
+ * mirroring findTextureHover()'s lookup. Only a **loose** file gets a real go-to-
+ * definition target: a texture packed inside a `.vp`/`.vpc` has no safe destination to
+ * jump to, since the only virtual-document scheme this project registers
+ * (`fso-tbl-vp:`, see toDefinitionLocation()) decodes its content as UTF-8 text for
+ * table-file navigation - pointing it at binary image bytes would just render garbage.
+ * Hover already tells the user which archive a VP-packed texture lives in; that's as far
+ * as navigation for those can safely go until a binary-aware content provider exists.
+ */
+function resolveTextureDefinition(documentUri: string, value: string): Location[] | null {
+  if (value.toLowerCase() === "<none>" || value === "") {
+    return null;
+  }
+  try {
+    const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+    const resolved = getTextureIndex(searchDirs).get(value.toLowerCase());
+    if (!resolved || resolved.kind !== "loose") {
+      return null;
+    }
+    const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
+    return [{ uri: pathToFileURL(resolved.containerPath).toString(), range }];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Go-to-definition/declaration: every ship/weapon cross-reference field this project
+ * already validates/hovers gets a matching jump target here, mirroring each one's hover
+ * lookup exactly (same merged table, same key) so the two features never disagree:
+ * - Ship `$Armor Type:`/`$Shield Armor Type:` -> the matching armor.tbl `$Name:` line.
+ * - Ship `$Species:` -> species_defs.tbl, `$AI Class:` -> ai.tbl.
+ * - Ship/weapon sound-referencing fields (`$LaunchSnd:`, `$ImpactSnd:`, etc. - see
+ *   [[fso-gamesnd-lookup]]) -> sounds.tbl's Game Sounds section.
+ * - Ship/weapon texture/animation-referencing fields -> the texture file on disk, loose
+ *   files only (see resolveTextureDefinition()'s doc comment for why VP-packed ones
+ *   don't get a target yet).
+ * - Ship `$Explosion Animations:` (per name under the cursor) -> fireball.tbl's
+ *   `$Unique ID:`-keyed entries.
+ * - Ship `$Target Priority Groups:` (per name under the cursor) -> objecttypes.tbl's
+ *   `#Target Priorities` section.
+ * - Ship `$Default PBanks:`/`$Default SBanks:` (per weapon name under the cursor,
+ *   ship-level or per-subsystem) -> weapons.tbl.
+ * - Weapon `$Damage Type:` -> every armor.tbl `$Damage Type:` line that references it,
+ *   since unlike a name there's no single "the" definition for a shared damage-type tag.
+ * - Species `$Default IFF:` -> iff_defs.tbl.
  * Registered for both onDefinition and onDeclaration (see capabilities above) since
  * there's no meaningful distinction between the two for this project's cross-references
  * - a table value doesn't have separate "declared" vs "defined" locations.
@@ -236,9 +277,44 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       }
     }
 
-    const shipSoundRef = findSoundRefAtLine(ship.soundRefs, line);
+    const shipTextureRef = findRefAtLine(ship.textureRefs, line);
+    if (shipTextureRef) {
+      return resolveTextureDefinition(documentUri, shipTextureRef.value);
+    }
+
+    const shipSoundRef = findRefAtLine(ship.soundRefs, line);
     if (shipSoundRef) {
       return resolveSoundDefinition(documentUri, shipSoundRef.value);
+    }
+
+    if (ship.explosionAnimationsLine === line && ship.explosionAnimations.length > 0) {
+      const doc = documents.get(documentUri);
+      const token = doc ? findNameListTokenAt(doc, line, params.position.character) : null;
+      if (!token || !token.name) {
+        return null;
+      }
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveFireballTable(searchDirs).get(token.name.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    if (ship.targetPriorityGroupsLine === line && ship.targetPriorityGroups.length > 0) {
+      const doc = documents.get(documentUri);
+      const token = doc ? findNameListTokenAt(doc, line, params.position.character) : null;
+      if (!token || !token.name) {
+        return null;
+      }
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveObjectTypesTable(searchDirs).get(objectTypesMapKey("target-priorities", token.name));
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
     }
 
     const isArmor = ship.armorTypeLine === line && ship.armorType;
@@ -258,7 +334,12 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
 
   const weapons = weaponEntriesByUri.get(documentUri) ?? [];
   for (const weapon of weapons) {
-    const weaponSoundRef = findSoundRefAtLine(weapon.soundRefs, line);
+    const weaponTextureRef = findRefAtLine(weapon.textureRefs, line);
+    if (weaponTextureRef) {
+      return resolveTextureDefinition(documentUri, weaponTextureRef.value);
+    }
+
+    const weaponSoundRef = findRefAtLine(weapon.soundRefs, line);
     if (weaponSoundRef) {
       return resolveSoundDefinition(documentUri, weaponSoundRef.value);
     }
@@ -1193,6 +1274,50 @@ function computeBankNameTokens(doc: TextDocument, line: number): BankNameToken[]
 /** The closed quoted token (see computeBankNameTokens) that `character` falls within, if any. */
 function findBankNameTokenAt(doc: TextDocument, line: number, character: number): BankNameToken | null {
   return computeBankNameTokens(doc, line).find((t) => character >= t.range.start.character && character <= t.range.end.character) ?? null;
+}
+
+/**
+ * Every name token in a `$Field: ( name name ... )`-style list value on `line`, with
+ * exact ranges - for fields like `$Explosion Animations:`/`$Target Priority Groups:`
+ * whose quoting convention isn't confirmed (see splitNameList()'s doc comment in
+ * shipEntries.ts): quoted tokens (`"Name"`) are preferred if any are present, otherwise
+ * falls back to whitespace/comma-separated bare identifiers. Scoped to the text after the
+ * field's own `:` (and before any trailing `;` line comment) so the field's own key words
+ * can't be misread as list members.
+ */
+function computeNameListTokens(doc: TextDocument, line: number): BankNameToken[] {
+  const fullLine = doc
+    .getText({ start: { line, character: 0 }, end: { line: line + 1, character: 0 } })
+    .replace(/\r?\n$/, "");
+  const colonIdx = fullLine.indexOf(":");
+  const valueStart = colonIdx === -1 ? 0 : colonIdx + 1;
+  const commentIdx = fullLine.indexOf(";", valueStart);
+  const valueText = fullLine.slice(valueStart, commentIdx === -1 ? undefined : commentIdx);
+
+  const tokens: BankNameToken[] = [];
+  const quoteRe = /"([^"]*)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = quoteRe.exec(valueText))) {
+    const start = valueStart + match.index + 1;
+    const end = start + match[1].length;
+    tokens.push({ name: match[1].trim(), range: { start: { line, character: start }, end: { line, character: end } } });
+  }
+  if (tokens.length > 0) {
+    return tokens;
+  }
+
+  const bareRe = /[^,\s()]+/g;
+  while ((match = bareRe.exec(valueText))) {
+    const start = valueStart + match.index;
+    const end = start + match[0].length;
+    tokens.push({ name: match[0], range: { start: { line, character: start }, end: { line, character: end } } });
+  }
+  return tokens;
+}
+
+/** The name-list token (see computeNameListTokens) that `character` falls within, if any. */
+function findNameListTokenAt(doc: TextDocument, line: number, character: number): BankNameToken | null {
+  return computeNameListTokens(doc, line).find((t) => character >= t.range.start.character && character <= t.range.end.character) ?? null;
 }
 
 /**
