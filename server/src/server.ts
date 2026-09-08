@@ -215,6 +215,10 @@ function resolveTextureDefinition(documentUri: string, value: string): Location[
  * Go-to-definition/declaration: every ship/weapon cross-reference field this project
  * already validates/hovers gets a matching jump target here, mirroring each one's hover
  * lookup exactly (same merged table, same key) so the two features never disagree:
+ * - A ship's/weapon's own `$Name:` line -> every layer (base .tbl + every applied .tbm,
+ *   in application order) that touched that entry, i.e. "show me every place this thing
+ *   gets overridden" - the same list the effective-entry hover's "Layers applied" already
+ *   shows, just as jump targets instead of plain text.
  * - Ship `$Armor Type:`/`$Shield Armor Type:` -> the matching armor.tbl `$Name:` line.
  * - Ship `$Species:` -> species_defs.tbl, `$AI Class:` -> ai.tbl.
  * - Ship/weapon sound-referencing fields (`$LaunchSnd:`, `$ImpactSnd:`, etc. - see
@@ -241,6 +245,16 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
 
   const ships = shipEntriesByUri.get(documentUri) ?? [];
   for (const ship of ships) {
+    if (ship.nameLine === line) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveShipTable(searchDirs).get(ship.name.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
     const bankList = findBankListAtLine(ship, line);
     if (bankList) {
       const doc = documents.get(documentUri);
@@ -334,6 +348,16 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
 
   const weapons = weaponEntriesByUri.get(documentUri) ?? [];
   for (const weapon of weapons) {
+    if (weapon.nameLine === line) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveWeaponsTable(searchDirs).get(weapon.name.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
     const weaponTextureRef = findRefAtLine(weapon.textureRefs, line);
     if (weaponTextureRef) {
       return resolveTextureDefinition(documentUri, weaponTextureRef.value);

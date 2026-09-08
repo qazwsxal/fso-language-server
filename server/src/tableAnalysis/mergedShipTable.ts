@@ -8,9 +8,14 @@ import {
   describeResolvedSource,
   ResolvedFile,
 } from "../modResolution/resolver";
+import { SourceLocation } from "./sourceLocation";
 
 export interface EffectiveShipEntry {
   name: string;
+  /** Where this ship's `$Name:` was (last) set - mirrors EffectiveWeaponEntry.nameLocation. */
+  nameLocation: SourceLocation | null;
+  /** Every location (base .tbl + every .tbm layer, in application order) where this ship's `$Name:` was touched - for "cycle through every definition" go-to-definition. */
+  allLocations: SourceLocation[];
   modelFile: string | null;
   modelFileSource: string | null;
   subsystems: ShipSubsystemRef[];
@@ -91,6 +96,8 @@ function applyLayer(result: Map<string, EffectiveShipEntry>, resolved: ResolvedF
     const merged: EffectiveShipEntry =
       existing ?? {
         name: entry.name,
+        nameLocation: null,
+        allLocations: [],
         modelFile: null,
         modelFileSource: null,
         subsystems: [],
@@ -105,6 +112,9 @@ function applyLayer(result: Map<string, EffectiveShipEntry>, resolved: ResolvedF
         shieldArmorTypeSource: null,
         layerSources: [],
       };
+
+    merged.nameLocation = { resolved, line: entry.nameLine };
+    merged.allLocations = [...merged.allLocations, { resolved, line: entry.nameLine }];
 
     if (entry.modelFile) {
       merged.modelFile = entry.modelFile;
