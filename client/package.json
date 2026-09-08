@@ -40,6 +40,10 @@
       {
         "command": "fsoLsp.revealDefinitionOrPofViewer",
         "title": "Go to Definition (FSO Table)"
+      },
+      {
+        "command": "fsoLsp.openPofViewerAtPosition",
+        "title": "Open 3D POF Viewer at Position (FSO Table)"
       }
     ],
     "keybindings": [

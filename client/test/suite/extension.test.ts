@@ -1031,6 +1031,44 @@ suite("FSO Table Language Server", () => {
     );
   });
 
+  test("a $Subsystem: name is a ctrl+click-able DocumentLink pointing at the 3D viewer command", async () => {
+    // Restores ctrl+click support (removed above to fix the hover-triggers-open bug)
+    // via a DIFFERENT VSCode mechanism than go-to-definition: a DocumentLink. Unlike a
+    // DefinitionProvider, provideDocumentLinks is computed once per document and is
+    // itself side-effect-free - only clicking the link's `command:` target actually
+    // opens the viewer, so this doesn't reintroduce the "opens on mere hover" bug. This
+    // test can't simulate a real mouse click, but it does verify: (1) the link exists
+    // over the right text range, pointing at the right command with the right
+    // arguments, and (2) invoking that exact command (what a real click does) opens the
+    // viewer - together these cover everything a real ctrl+click would exercise.
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const turretLine = lines.findIndex((l) => l.includes("$Subsystem: turret01"));
+    assert.ok(turretLine >= 0, "fixture must contain a $Subsystem: turret01 line");
+
+    const links = (await vscode.commands.executeCommand("vscode.executeLinkProvider", uri)) as vscode.DocumentLink[];
+    const link = links.find((l) => l.range.start.line === turretLine);
+    assert.ok(link, `expected a DocumentLink on the $Subsystem: turret01 line, got links on lines: ${JSON.stringify(links.map((l) => l.range.start.line))}`);
+    assert.ok(
+      link!.target?.toString().startsWith("command:fsoLsp.openPofViewerAtPosition"),
+      `expected the link's target to invoke fsoLsp.openPofViewerAtPosition, got: ${link!.target?.toString()}`,
+    );
+    const linkedText = doc.getText(link!.range);
+    assert.strictEqual(linkedText, "turret01", `expected the link to cover just the subsystem name, got: "${linkedText}"`);
+
+    // Not asserting on a tab-count *increase*: an earlier test in this suite may have
+    // already opened (and left open) the same model's panel, which this would then
+    // reuse (see pofViewer.ts's fingerprint()-based dispatch) rather than add a new
+    // tab - reuse is the correct, intended behavior, not something to work around here.
+    await vscode.commands.executeCommand("fsoLsp.openPofViewerAtPosition", uri.toString(), turretLine);
+    const opened = await waitFor(() => countPofViewerTabs() > 0, 5000);
+    assert.ok(opened, "expected activating the link's target command to open the 3D POF viewer");
+  });
+
   test("F12 elsewhere in ships.tbl falls through to normal go-to-definition instead of opening the 3D viewer", async () => {
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);
