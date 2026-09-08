@@ -1712,58 +1712,5 @@ connection.onRequest(
   },
 );
 
-/**
- * Loads and decodes a POF directly from an absolute filesystem path, independent of any
- * table document/ship entry - used by the client's custom editor for `.pof` files
- * (opening one directly, e.g. via a link or from the Explorer, has no "current ship" to
- * resolve through). Only loose files are supported (no VP-archived POF has a real
- * filesystem path a custom editor could be opened against in the first place - see
- * fso-lsp/getPofSubsystemLinks below, which only ever offers a link for a loose model).
- */
-connection.onRequest(
-  "fso-lsp/getPofGeometryByPath",
-  (params: { pofPath: string; targetSubmodelName: string | null }): PofGeometryForSubsystemResult | null => {
-    try {
-      const pof = loadPofCached({ kind: "loose", containerPath: params.pofPath });
-      if (pof.subobjects.length === 0) {
-        return null;
-      }
-      return buildPofGeometryResult(pof, path.basename(params.pofPath), params.targetSubmodelName);
-    } catch {
-      return null;
-    }
-  },
-);
-
-/**
- * One entry per `$Subsystem:` line in the document whose ship's model resolves to a
- * loose (non-VP-archived) POF file - everything the client needs to offer a "open 3D
- * view" link (see DocumentLinkProvider in extension.ts) pointing directly at that POF
- * file, without a per-line round trip: this is computed once for the whole document
- * (one ship-model resolution each, not one per subsystem) rather than once per line.
- */
-connection.onRequest(
-  "fso-lsp/getPofSubsystemLinks",
-  (params: { uri: string }): { line: number; pofPath: string; subsystemName: string }[] => {
-    const ships = shipEntriesByUri.get(params.uri) ?? [];
-    const results: { line: number; pofPath: string; subsystemName: string }[] = [];
-
-    for (const ship of ships) {
-      if (ship.subsystems.length === 0) {
-        continue;
-      }
-      const location = resolvePofLocationForShipEntry(params.uri, ship);
-      if (!location || location.kind !== "loose") {
-        continue;
-      }
-      for (const subsystem of ship.subsystems) {
-        results.push({ line: subsystem.line, pofPath: location.containerPath, subsystemName: subsystem.name });
-      }
-    }
-
-    return results;
-  },
-);
-
 documents.listen(connection);
 connection.listen();

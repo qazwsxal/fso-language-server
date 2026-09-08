@@ -26,4 +26,9 @@ $Armor Type: Standard
 $Shield Armor Type: Heavy Armor
 $AI Class: Nonexistent AI Class
 
+$Name: GTF VP Test
+$Short name: VP Test
+$POF file: vpcmodel.pof
+$Subsystem: turret01, 0.0, 5.0
+
 #End

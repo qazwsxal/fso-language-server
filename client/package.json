@@ -11,8 +11,7 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:fso-table",
-    "onCustomEditor:fsoLsp.pofViewer"
+    "onLanguage:fso-table"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -52,18 +51,6 @@
         "command": "fsoLsp.revealDefinitionOrPofViewer",
         "key": "F12",
         "when": "editorTextFocus && editorLangId == fso-table"
-      }
-    ],
-    "customEditors": [
-      {
-        "viewType": "fsoLsp.pofViewer",
-        "displayName": "FSO POF 3D Viewer",
-        "selector": [
-          {
-            "filenamePattern": "*.pof"
-          }
-        ],
-        "priority": "default"
       }
     ]
   },

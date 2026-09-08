@@ -1078,73 +1078,44 @@ suite("FSO Table Language Server", () => {
     assert.ok(opened, "expected activating the hover link's target command to open the 3D POF viewer");
   });
 
-  test("ctrl+click on a $Subsystem: line opens the resolved .pof directly in the 3D custom editor", async () => {
-    // A genuine, single-gesture ctrl+click: this link's target is a real `file:` URI
-    // for the resolved POF (not a `command:` URI, which VSCode's document-link opener
-    // doesn't honor as a command - see the hover-link test above). Opening a real
-    // resource is something VSCode's built-in link-follow handler genuinely supports,
-    // and since fsoLsp.pofViewer is registered as the default editor for *.pof (see
-    // package.json's customEditors), "open this resource" lands in the 3D viewer
-    // instead of showing binary garbage as text. `vscode.open` on the link's exact
-    // target is what a real ctrl+click does under the hood.
+  test("hovering a $Subsystem: line whose model is packed in a .vpc archive also offers the 'Open 3D view' link", async () => {
+    // Ctrl+click (via a DocumentLink) was tried for this case too, but dropped: VSCode's
+    // built-in "open this link" click handler only reliably opens *loose* files that
+    // way (a POF packed inside a .vp/.vpc archive has no real file: URI, and every
+    // virtual-scheme approach tried - a registered FileSystemProvider, non-zero stat/
+    // readFile responses, an explicit workbench.editorAssociations entry - still failed
+    // to open via VSCode's default resource-open codepath). The hover-triggered "Open
+    // 3D view" link works identically for loose and VP-archived models, since it goes
+    // through our own command rather than VSCode's generic resource opener - so that's
+    // the only mouse-driven trigger, alongside F12, for either case.
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);
     await vscode.window.showTextDocument(doc);
     await waitForDiagnostics(uri);
 
     const lines = doc.getText().split(/\r\n|\r|\n/);
-    const turretLine = lines.findIndex((l) => l.includes("$Subsystem: turret01"));
-    assert.ok(turretLine >= 0, "fixture must contain a $Subsystem: turret01 line");
+    const pofLine = lines.findIndex((l) => l.includes("vpcmodel.pof"));
+    assert.ok(pofLine >= 0, "fixture must contain a ship with $POF file: vpcmodel.pof");
+    const vpTurretLine = lines.findIndex((l, i) => i > pofLine && l.includes("$Subsystem: turret01"));
+    assert.ok(vpTurretLine >= 0, "fixture must contain the GTF VP Test ship's $Subsystem: turret01 line");
 
-    const links = (await vscode.commands.executeCommand("vscode.executeLinkProvider", uri)) as vscode.DocumentLink[];
-    const link = links.find((l) => l.range.start.line === turretLine);
-    assert.ok(link, `expected a DocumentLink on the $Subsystem: turret01 line, got links on lines: ${JSON.stringify(links.map((l) => l.range.start.line))}`);
-    assert.strictEqual(link!.target?.scheme, "file", `expected a real file: URI target, got: ${link!.target?.toString()}`);
-    assert.ok(
-      link!.target!.fsPath.toLowerCase().endsWith("fighter01.pof"),
-      `expected the link to point at fighter01.pof, got: ${link!.target!.fsPath}`,
+    const hovers = (await vscode.commands.executeCommand(
+      "vscode.executeHoverProvider",
+      uri,
+      new vscode.Position(vpTurretLine, 2),
+    )) as vscode.Hover[];
+    const linkHover = hovers.find((h) =>
+      h.contents.some((c) => {
+        const value = typeof c === "string" ? c : (c as vscode.MarkdownString).value;
+        return value.includes("command:fsoLsp.openPofViewerAtPosition");
+      }),
     );
-    assert.strictEqual(
-      new URLSearchParams(link!.target!.query).get("subsystem"),
-      "turret01",
-      `expected the link's query to carry the subsystem name, got: ${link!.target!.query}`,
-    );
+    assert.ok(linkHover, `expected a hover offering the 3D-view command link even for a VP-archived subsystem, got: ${JSON.stringify(hovers)}`);
 
-    const tabsBefore = countPofCustomEditorTabs();
-    await vscode.commands.executeCommand("vscode.open", link!.target);
-    const opened = await waitFor(() => countPofCustomEditorTabs() > tabsBefore, 5000);
-    assert.ok(opened, "expected opening the link's target to open a fsoLsp.pofViewer custom editor tab");
-    const tabsAfterFirst = countPofCustomEditorTabs();
-    const resolveCountAfterFirst = (await vscode.commands.executeCommand(
-      "fsoLsp._debugGetPofCustomEditorResolveCount",
-    )) as number;
-
-    // Ctrl+clicking a DIFFERENT subsystem of the same underlying .pof is a different
-    // query string on the same file: URI. Empirically (not something to assume without
-    // checking - a prior DocumentLink attempt in this same feature broke on an
-    // unverified VSCode-behavior assumption): VSCode reuses the SAME tab rather than
-    // opening a second one. Also confirm resolveCustomEditor actually re-ran for the
-    // new subsystem (via the debug counter, since there's no public API to read a
-    // webview's live content) - reusing the tab would be useless if it silently kept
-    // showing the first subsystem's highlight forever.
-    const engineLine = lines.findIndex((l) => l.includes("$Subsystem: engine01,"));
-    assert.ok(engineLine >= 0, "fixture must contain a $Subsystem: engine01 line");
-    const engineLink = links.find((l) => l.range.start.line === engineLine);
-    assert.ok(engineLink, "expected a DocumentLink on the $Subsystem: engine01 line");
-    await vscode.commands.executeCommand("vscode.open", engineLink!.target);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    assert.strictEqual(
-      countPofCustomEditorTabs(),
-      tabsAfterFirst,
-      "expected the SAME custom editor tab to be reused for a different subsystem's link on the same .pof, not a second tab",
-    );
-    const resolveCountAfterSecond = (await vscode.commands.executeCommand(
-      "fsoLsp._debugGetPofCustomEditorResolveCount",
-    )) as number;
-    assert.ok(
-      resolveCountAfterSecond > resolveCountAfterFirst,
-      `expected resolveCustomEditor to re-run for the new subsystem (so its highlight actually updates), got count ${resolveCountAfterFirst} -> ${resolveCountAfterSecond}`,
-    );
+    const tabsBefore = countPofViewerTabs();
+    await vscode.commands.executeCommand("fsoLsp.openPofViewerAtPosition", uri.toString(), vpTurretLine);
+    const opened = await waitFor(() => countPofViewerTabs() > tabsBefore, 5000);
+    assert.ok(opened, "expected activating the hover link's target command to open the 3D POF viewer for the VP-archived model");
   });
 
   test("F12 elsewhere in ships.tbl falls through to normal go-to-definition instead of opening the 3D viewer", async () => {
@@ -1178,18 +1149,6 @@ function countPofViewerTabs(): number {
   return count;
 }
 
-/** Counts open editor tabs backed by the fsoLsp.pofViewer custom editor (see pofCustomEditor.ts) - a distinct panel/tab mechanism from the manually-managed showPofViewer() panel counted above. */
-function countPofCustomEditorTabs(): number {
-  let count = 0;
-  for (const group of vscode.window.tabGroups.all) {
-    for (const tab of group.tabs) {
-      if (tab.input instanceof vscode.TabInputCustom && tab.input.viewType === "fsoLsp.pofViewer") {
-        count++;
-      }
-    }
-  }
-  return count;
-}
 
 async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
   const start = Date.now();

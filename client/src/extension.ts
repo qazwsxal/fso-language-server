@@ -10,13 +10,9 @@ import {
   Hover,
   HoverProvider,
   MarkdownString,
-  DocumentLink,
-  DocumentLinkProvider,
-  Range,
 } from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
 import { showPofViewer, PofGeometryForSubsystemResult } from "./pofViewer";
-import { registerPofCustomEditor } from "./pofCustomEditor";
 
 let client: LanguageClient;
 
@@ -153,26 +149,26 @@ export function activate(context: ExtensionContext): void {
   );
 
   /**
-   * Attempted to restore ctrl+click for `$Subsystem:` lines via a `DocumentLink`
-   * (provideDocumentLinks is computed once per document, not on every ctrl+hover mouse
-   * move, so it doesn't have the DefinitionProvider hover-bug fixed above) - but a
-   * DocumentLink's `command:`-scheme target turns out NOT to be honored the way a
-   * trusted MarkdownString's is: VSCode's built-in "open this link" handler treats
-   * `target` purely as a resource to open (effectively via `vscode.open`), not as a
-   * command to execute, so clicking it did nothing. Confirmed in practice (ctrl+click
-   * silently not working) after implementing it - the API surface allows constructing
-   * such a link, it just isn't wired up to actually run commands.
+   * The mouse-driven equivalent of F12 for `$Subsystem:` lines: hovering offers a
+   * clickable "Open 3D view" link, via an `isTrusted` `MarkdownString` - VSCode's
+   * Markdown renderer specifically honors `command:` links there. Hover computation is
+   * itself side-effect-free regardless of how often it's invoked (same as any other
+   * hover in this extension), so nothing happens until the user actually clicks the
+   * link inside the tooltip. This reuses `openPofViewerAt`/`showPofViewer` - the exact
+   * same panel F12 opens/reuses - so mixing F12 and hover-clicks on the same model's
+   * different subsystems still lands in one tab, not two.
    *
-   * A `Hover` whose content is an `isTrusted` `MarkdownString` IS a genuinely reliable,
-   * documented way to run a command from a click - VSCode's Markdown renderer
-   * specifically special-cases `command:` links there (unlike the generic document-link
-   * opener above). Hover computation is itself side-effect-free regardless of how often
-   * it's invoked (it can't be, any more than it already is for every other hover in this
-   * extension), so this doesn't reintroduce the earlier bug: nothing happens until the
-   * user actually clicks the "Open 3D view" link inside the tooltip. This trades a
-   * literal single ctrl+click on the bare text for "hover, then click the link in the
-   * tooltip" - not pixel-identical to go-to-definition's gesture, but the closest
-   * reliably-working mouse-driven equivalent; F12 remains the exact one-step gesture.
+   * A literal single ctrl+click on the bare `$Subsystem:` text (matching go-to-
+   * definition's gesture) was tried via a `DocumentLink` targeting a real `file:` URI
+   * routed through a custom editor, but was dropped: VSCode's built-in link-click
+   * handler only reliably opens *loose* files that way (a POF packed inside a
+   * `.vp`/`.vpc` archive has no real `file:` URI, and a virtual-scheme URI silently
+   * failed to open via VSCode's default resource-open codepath no matter what was
+   * tried), and even for loose files the custom editor is VSCode's own separate
+   * tab-tracking mechanism from this panel - so a user mixing F12 and ctrl+click on the
+   * same model's subsystems could end up with two different tabs for it. Not worth the
+   * inconsistency for a gesture that only worked for half of the cases; F12 plus this
+   * hover link cover both loose and VP-archived models identically.
    */
   const subsystemHoverProvider: HoverProvider = {
     provideHover(document, position) {
@@ -189,55 +185,6 @@ export function activate(context: ExtensionContext): void {
     },
   };
   context.subscriptions.push(languages.registerHoverProvider({ language: "fso-table" }, subsystemHoverProvider));
-
-  /**
-   * A genuine, single-gesture ctrl+click for `$Subsystem:` lines - unlike the earlier
-   * DocumentLink attempt (which pointed at a `command:` URI VSCode doesn't honor as
-   * a command; see the hover-provider doc comment above), this link's target is a REAL
-   * `file:` URI for the resolved POF file, with the target subsystem name carried in
-   * the query string. Opening a real resource is something VSCode's built-in "open
-   * this link" handler genuinely does support, and since `.pof` is registered as the
-   * default editor for pofCustomEditor.ts's viewer (see package.json's
-   * `customEditors`), VSCode opens the 3D view instead of trying to show binary
-   * garbage as text - so this reproduces the original literal ctrl+click UX.
-   *
-   * Only offered for subsystems whose model resolves to a loose file (not one inside a
-   * .vp/.vpc archive - there's no real filesystem path to point a `file:` URI at for
-   * those), and computed once per document via a single request rather than one
-   * round trip per `$Subsystem:` line.
-   */
-  const subsystemLinkProvider: DocumentLinkProvider = {
-    async provideDocumentLinks(document) {
-      try {
-        await clientReady;
-        const infos = await client.sendRequest<{ line: number; pofPath: string; subsystemName: string }[]>(
-          "fso-lsp/getPofSubsystemLinks",
-          { uri: document.uri.toString() },
-        );
-        const links: DocumentLink[] = [];
-        for (const { line, pofPath, subsystemName } of infos) {
-          if (line >= document.lineCount) {
-            continue;
-          }
-          const text = document.lineAt(line).text;
-          const nameStart = text.indexOf(subsystemName);
-          if (nameStart === -1) {
-            continue;
-          }
-          const target = Uri.file(pofPath).with({ query: `subsystem=${encodeURIComponent(subsystemName)}` });
-          const link = new DocumentLink(new Range(line, nameStart, line, nameStart + subsystemName.length), target);
-          link.tooltip = "Open 3D view";
-          links.push(link);
-        }
-        return links;
-      } catch {
-        return [];
-      }
-    },
-  };
-  context.subscriptions.push(languages.registerDocumentLinkProvider({ language: "fso-table" }, subsystemLinkProvider));
-
-  context.subscriptions.push(...registerPofCustomEditor(context, client, clientReady));
 }
 
 export function deactivate(): Thenable<void> | undefined {
