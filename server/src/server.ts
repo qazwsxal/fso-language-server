@@ -156,8 +156,38 @@ function toDefinitionLocation(loc: SourceLocation): Location {
 }
 
 /**
- * Go-to-definition/declaration: currently handles a ship's `$Armor Type:`/
- * `$Shield Armor Type:` (-> the matching armor.tbl `$Name:` line) and a weapon's
+ * Finds the sound ref (if any) at `line` within a ship's/weapon's `soundRefs` list - the
+ * same shape findSoundHover() matches on, reused here so go-to-definition and hover agree
+ * on what counts as "on" a sound-referencing field.
+ */
+function findSoundRefAtLine(refs: (ShipTextureRef | WeaponTextureRef)[], line: number): ShipTextureRef | WeaponTextureRef | undefined {
+  return refs.find((r) => r.line === line);
+}
+
+/**
+ * Resolves a sound-referencing field's value to its sounds.tbl `$Name:` definition
+ * site(s), mirroring findSoundHover()'s lookup (always the merged table's `"game"` kind -
+ * see [[fso-gamesnd-lookup]] project memory) but returning LSP Locations instead of a
+ * hover string. `<none>`/empty/`-1` are the same "no sound set" sentinels
+ * computeSoundDiagnostics() skips - nothing to jump to for those.
+ */
+function resolveSoundDefinition(documentUri: string, value: string): Location[] | null {
+  if (value.toLowerCase() === "<none>" || value === "" || value === "-1") {
+    return null;
+  }
+  try {
+    const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+    const entry = getEffectiveSoundsTable(searchDirs).get(soundsMapKey("game", value));
+    return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Go-to-definition/declaration: handles a ship's `$Armor Type:`/`$Shield Armor Type:`
+ * (-> the matching armor.tbl `$Name:` line), a ship's/weapon's sound-referencing fields
+ * (-> the matching sounds.tbl `$Name:` line - see [[fso-gamesnd-lookup]]), and a weapon's
  * `$Damage Type:` (-> every armor.tbl `$Damage Type:` line that references it, since
  * unlike a name there's no single "the" definition for a shared damage-type tag).
  * Registered for both onDefinition and onDeclaration (see capabilities above) since
@@ -206,6 +236,11 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       }
     }
 
+    const shipSoundRef = findSoundRefAtLine(ship.soundRefs, line);
+    if (shipSoundRef) {
+      return resolveSoundDefinition(documentUri, shipSoundRef.value);
+    }
+
     const isArmor = ship.armorTypeLine === line && ship.armorType;
     const isShieldArmor = ship.shieldArmorTypeLine === line && ship.shieldArmorType;
     if (!isArmor && !isShieldArmor) {
@@ -223,6 +258,11 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
 
   const weapons = weaponEntriesByUri.get(documentUri) ?? [];
   for (const weapon of weapons) {
+    const weaponSoundRef = findSoundRefAtLine(weapon.soundRefs, line);
+    if (weaponSoundRef) {
+      return resolveSoundDefinition(documentUri, weaponSoundRef.value);
+    }
+
     if (weapon.damageTypeLine !== line || !weapon.damageType) {
       continue;
     }
