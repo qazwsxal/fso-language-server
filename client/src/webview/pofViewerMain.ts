@@ -114,7 +114,17 @@ function initSceneIfNeeded(): void {
   camera = new THREE.PerspectiveCamera(60, container.clientWidth / Math.max(container.clientHeight, 1), 0.01, 1e6);
   camera.position.set(10, 10, 10);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true });
+  // A real capital ship's bounding radius can run into the thousands of units, and
+  // renderGeometry() sets camera.far to ~20x that - with the fixed near=0.01 this
+  // started with, that's a near:far ratio in the millions, far beyond what a standard
+  // (linear) WebGL depth buffer can represent without severe z-fighting/flicker on
+  // large, distant geometry. logarithmicDepthBuffer trades a little fragment-shader
+  // cost for depth precision that scales sanely across that whole range - the standard
+  // three.js fix for this exact "jittery artifacts on a big scene" symptom. near is
+  // ALSO tightened relative to the model's own scale in renderGeometry() below, since
+  // logarithmic depth alone doesn't fully compensate for a near plane that's
+  // needlessly tiny relative to a huge far plane.
+  renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
   renderer.setSize(container.clientWidth, container.clientHeight);
   container.appendChild(renderer.domElement);
 
@@ -322,6 +332,12 @@ function renderGeometry(msg: GeometryMessage): void {
   applyHighlight(msg.targetSubmodelIndex);
 
   camera.position.set(boundingRadius * 1.5, boundingRadius * 1.2, boundingRadius * 1.5);
+  // near scales with the model instead of staying pinned at a tiny constant - a fixed
+  // 0.01 next to a far plane in the tens of thousands (typical for a real capital ship)
+  // is exactly the pathological near:far ratio that causes depth-buffer z-fighting.
+  // 1/10000th of the model's own scale is still small enough to get very close to a
+  // small subsystem without clipping into it.
+  camera.near = Math.max(boundingRadius / 10000, 0.001);
   camera.far = boundingRadius * 20;
   camera.updateProjectionMatrix();
   controls.target.set(0, 0, 0);
