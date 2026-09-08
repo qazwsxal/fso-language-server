@@ -23,7 +23,7 @@ import {
   Position,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
-import { parseTable, ParseResult, ParseDiagnostic, TableSection } from "./parser";
+import { parseTable, ParseResult, ParseDiagnostic, TableSection, LOOSE_SECTION_NAME } from "./parser";
 import { findSchemaForFile, TableSchema } from "./schemas";
 import { validateAgainstSchema } from "./schemaValidator";
 import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef } from "./tableAnalysis/shipEntries";
@@ -2285,7 +2285,13 @@ connection.onDocumentSymbol((params: DocumentSymbolParams): DocumentSymbol[] => 
       !!schema && schema.sectionNames.some((n) => n.trim().toLowerCase() === section.name.trim().toLowerCase());
 
     return {
-      name: section.name,
+      // The parser's synthetic catch-all for sectionless top-level fields (see
+      // LOOSE_SECTION_NAME's doc comment - rank.tbl's optional `[RANK NAMES]` block is
+      // the confirmed real case) has an empty name, which the client rejects outright
+      // ("name must not be falsy") and fails the whole outline request for the document -
+      // not just this one symbol. Every other section name is a real `#Section` header
+      // and can't be empty.
+      name: section.name === LOOSE_SECTION_NAME ? "(fields outside any #Section)" : section.name,
       kind: SymbolKind.Namespace,
       range: lineSpanRange(lines, section.startLine, endLine),
       selectionRange: lineSpanRange(lines, section.startLine, section.startLine),
