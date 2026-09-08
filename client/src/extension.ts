@@ -1,5 +1,5 @@
 import * as path from "path";
-import { ExtensionContext, languages, workspace, Position, TextDocument, Uri, TextDocumentContentProvider } from "vscode";
+import { commands, ExtensionContext, window, workspace, Uri, TextDocumentContentProvider } from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
 import { showPofViewer, PofGeometryForSubsystemResult } from "./pofViewer";
 
@@ -77,33 +77,48 @@ export function activate(context: ExtensionContext): void {
   };
   context.subscriptions.push(workspace.registerTextDocumentContentProvider(VP_CONTENT_SCHEME, vpContentProvider));
 
-  // F12 on a ship's `$Subsystem:` line opens an explorable 3D view of that ship's POF
-  // model (highlighting the matching submodel) instead of navigating to a text
-  // location - LSP's textDocument/definition can only return text Locations, so this
-  // interception has to happen client-side. The server's custom
-  // "fso-lsp/getPofGeometryForSubsystem" request tells us in one round trip both
-  // whether `position` is a subsystem line AND (if so) the decoded geometry to show;
-  // for any other line it resolves to null and this provider returns undefined so the
-  // server's own textDocument/definition results (the armor/damage-type cross-reference
-  // feature registered server-side) are used normally instead.
+  /**
+   * F12 on a ship's `$Subsystem:` line opens an explorable 3D view of that ship's POF
+   * model instead of navigating to a text location. This is deliberately NOT
+   * implemented as a `languages.registerDefinitionProvider` (as an earlier version of
+   * this feature was) - VSCode calls a registered DefinitionProvider on every ctrl+hover
+   * mouse move to decide whether to show the "click here to go to definition" underline,
+   * not just on an actual click/F12 (this is a documented, currently-unchangeable
+   * VSCode behavior - see microsoft/vscode#212444). A provider that performs a real side
+   * effect (opening/revealing a webview) reacts to that hover-preview call exactly the
+   * same as a real invocation, so merely resting the mouse over a subsystem line while
+   * holding Ctrl silently popped the viewer open every time.
+   *
+   * A command bound directly to the F12 key (see package.json's `keybindings`, scoped to
+   * `editorLangId == fso-table`) only ever fires on an actual keypress, so it can safely
+   * perform the side effect. Ctrl+click can't be given the same treatment - it's a mouse
+   * gesture handled by VSCode's own DefinitionProvider dispatch, with no separate
+   * "this was an explicit click, not a hover preview" signal available to an extension -
+   * so ctrl+click on a `$Subsystem:` line falls through to normal (no-op) behavior
+   * rather than risk reintroducing the same accidental-open-on-hover bug. Every other
+   * cross-reference (armor type, species, weapon names, ...) is unaffected: those are
+   * pure navigation with no side effect, so the server's own onDefinition/onDeclaration
+   * already handles them correctly for both F12 and ctrl+click via the normal LSP path.
+   */
   context.subscriptions.push(
-    languages.registerDefinitionProvider({ language: "fso-table" }, {
-      async provideDefinition(document: TextDocument, position: Position) {
+    commands.registerCommand("fsoLsp.revealDefinitionOrPofViewer", async () => {
+      const editor = window.activeTextEditor;
+      if (editor && editor.document.languageId === "fso-table") {
         try {
           await clientReady;
           const result = await client.sendRequest<PofGeometryForSubsystemResult | null>(
             "fso-lsp/getPofGeometryForSubsystem",
-            { uri: document.uri.toString(), line: position.line },
+            { uri: editor.document.uri.toString(), line: editor.selection.active.line },
           );
-          if (!result) {
-            return undefined;
+          if (result) {
+            showPofViewer(context, result);
+            return;
           }
-          showPofViewer(context, result);
-          return undefined;
         } catch {
-          return undefined;
+          // Fall through to normal go-to-definition below.
         }
-      },
+      }
+      await commands.executeCommand("editor.action.revealDefinition");
     }),
   );
 }

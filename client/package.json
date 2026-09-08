@@ -35,6 +35,19 @@
         "scopeName": "source.fso-table",
         "path": "./syntaxes/fso-table.tmLanguage.json"
       }
+    ],
+    "commands": [
+      {
+        "command": "fsoLsp.revealDefinitionOrPofViewer",
+        "title": "Go to Definition (FSO Table)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "fsoLsp.revealDefinitionOrPofViewer",
+        "key": "F12",
+        "when": "editorTextFocus && editorLangId == fso-table"
+      }
     ]
   },
   "scripts": {

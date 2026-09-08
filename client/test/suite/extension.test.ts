@@ -943,12 +943,40 @@ suite("FSO Table Language Server", () => {
   });
 
   test("F12 on a $Subsystem: line opens the 3D POF viewer instead of returning a text location", async () => {
-    // The 3D viewer is a side effect (opening a webview), not a navigable text
-    // Location, so `vscode.executeDefinitionProvider` is expected to come back empty
-    // for this line - the real assertion is that invoking it doesn't throw, and that a
-    // new "POF: fighter01.pof" webview tab appears as a result of the client-side
-    // definition provider's side effect (see client/src/extension.ts /
-    // client/src/pofViewer.ts).
+    // F12 is bound (see package.json's "keybindings", scoped to editorLangId ==
+    // fso-table) to a dedicated command rather than a languages.registerDefinitionProvider
+    // - see the doc comment on that command in client/src/extension.ts for why: a
+    // registered DefinitionProvider fires on every ctrl+hover mouse move (VSCode calls it
+    // to decide whether to show the "click here" underline, not just on an actual
+    // click/F12 - a documented, currently-unchangeable VSCode behavior), so a provider
+    // that performs a real side effect popped the viewer open just from resting the
+    // mouse over a subsystem line with Ctrl held. The command, bound only to the actual
+    // F12 keypress, doesn't have that problem.
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const editor = await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const turretLine = lines.findIndex((l) => l.includes("$Subsystem: turret01"));
+    assert.ok(turretLine >= 0, "fixture must contain a $Subsystem: turret01 line");
+
+    const tabsBefore = countPofViewerTabs();
+    editor.selection = new vscode.Selection(turretLine, 5, turretLine, 5);
+    await vscode.commands.executeCommand("fsoLsp.revealDefinitionOrPofViewer");
+
+    // Poll briefly: the command's server round trip + webview creation happen asynchronously.
+    const opened = await waitFor(() => countPofViewerTabs() > tabsBefore, 5000);
+    assert.ok(opened, "expected a new 'POF: fighter01.pof' webview tab to open after F12 on $Subsystem: turret01");
+  });
+
+  test("merely computing go-to-definition (as VSCode does on every ctrl+hover) does NOT open the 3D viewer", async () => {
+    // Regression test: reported as "just tapping control seems to open the pof". Before
+    // the F12-command fix above, the viewer was opened directly from inside a
+    // languages.registerDefinitionProvider, which VSCode invokes on ctrl+hover alone
+    // (see the doc comment in extension.ts) - simulating that exact call here
+    // (vscode.executeDefinitionProvider, with no F12/click involved) must NOT open a
+    // viewer tab, proving the side effect no longer lives on that code path.
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);
     await vscode.window.showTextDocument(doc);
@@ -959,16 +987,13 @@ suite("FSO Table Language Server", () => {
     assert.ok(turretLine >= 0, "fixture must contain a $Subsystem: turret01 line");
 
     const tabsBefore = countPofViewerTabs();
-
-    await vscode.commands.executeCommand(
-      "vscode.executeDefinitionProvider",
-      uri,
-      new vscode.Position(turretLine, 5),
+    await vscode.commands.executeCommand("vscode.executeDefinitionProvider", uri, new vscode.Position(turretLine, 5));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.strictEqual(
+      countPofViewerTabs(),
+      tabsBefore,
+      "did not expect a POF viewer tab from a hover-style go-to-definition computation alone",
     );
-
-    // Poll briefly: the provider's server round trip + webview creation happen asynchronously.
-    const opened = await waitFor(() => countPofViewerTabs() > tabsBefore, 5000);
-    assert.ok(opened, "expected a new 'POF: fighter01.pof' webview tab to open after F12 on $Subsystem: turret01");
   });
 
   test("F12 on a different $Subsystem: of the same, already-open model reuses the panel instead of opening a second one", async () => {
@@ -982,7 +1007,7 @@ suite("FSO Table Language Server", () => {
     // "only one panel, ever" behavior or throw.
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(doc);
+    const editor = await vscode.window.showTextDocument(doc);
     await waitForDiagnostics(uri);
 
     const lines = doc.getText().split(/\r\n|\r|\n/);
@@ -991,11 +1016,13 @@ suite("FSO Table Language Server", () => {
     assert.ok(turretLine >= 0 && engineLine >= 0, "fixture must contain both a turret01 and engine01 $Subsystem: line");
 
     const tabsBefore = countPofViewerTabs();
-    await vscode.commands.executeCommand("vscode.executeDefinitionProvider", uri, new vscode.Position(turretLine, 5));
+    editor.selection = new vscode.Selection(turretLine, 5, turretLine, 5);
+    await vscode.commands.executeCommand("fsoLsp.revealDefinitionOrPofViewer");
     await waitFor(() => countPofViewerTabs() > tabsBefore, 5000);
     const tabsAfterFirst = countPofViewerTabs();
 
-    await vscode.commands.executeCommand("vscode.executeDefinitionProvider", uri, new vscode.Position(engineLine, 5));
+    editor.selection = new vscode.Selection(engineLine, 5, engineLine, 5);
+    await vscode.commands.executeCommand("fsoLsp.revealDefinitionOrPofViewer");
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.strictEqual(
       countPofViewerTabs(),
@@ -1004,10 +1031,10 @@ suite("FSO Table Language Server", () => {
     );
   });
 
-  test("F12 elsewhere in ships.tbl does not open the 3D viewer", async () => {
+  test("F12 elsewhere in ships.tbl falls through to normal go-to-definition instead of opening the 3D viewer", async () => {
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(doc);
+    const editor = await vscode.window.showTextDocument(doc);
     await waitForDiagnostics(uri);
 
     const lines = doc.getText().split(/\r\n|\r|\n/);
@@ -1015,12 +1042,8 @@ suite("FSO Table Language Server", () => {
     assert.ok(nameLine >= 0);
 
     const tabsBefore = countPofViewerTabs();
-    const result = await vscode.commands.executeCommand(
-      "vscode.executeDefinitionProvider",
-      uri,
-      new vscode.Position(nameLine, 2),
-    );
-    assert.ok(!result || (Array.isArray(result) && result.length === 0), "expected no definition result on a non-subsystem line");
+    editor.selection = new vscode.Selection(nameLine, 2, nameLine, 2);
+    await vscode.commands.executeCommand("fsoLsp.revealDefinitionOrPofViewer");
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.strictEqual(countPofViewerTabs(), tabsBefore, "did not expect a new POF viewer tab from a non-subsystem line");
   });
