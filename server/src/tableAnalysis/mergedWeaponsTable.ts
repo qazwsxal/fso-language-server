@@ -14,6 +14,8 @@ export interface EffectiveWeaponEntry {
   name: string;
   /** Where this weapon's `$Name:` was (last) set - for go-to-definition from a ship's `$Default PBanks:`/`$Default SBanks:` weapon-name list. */
   nameLocation: SourceLocation | null;
+  /** Every location (base .tbl + every .tbm layer, in application order) where this weapon's `$Name:` was touched - for "cycle through every definition" go-to-definition. */
+  allLocations: SourceLocation[];
   modelFile: string | null;
   modelFileSource: string | null;
   /** Every file that touched this entry, in application order (base .tbl first, then .tbm layers lowest-to-highest priority). */
@@ -82,12 +84,14 @@ function applyLayer(result: Map<string, EffectiveWeaponEntry>, resolved: Resolve
       existing ?? {
         name: entry.name,
         nameLocation: null,
+        allLocations: [],
         modelFile: null,
         modelFileSource: null,
         layerSources: [],
       };
 
     merged.nameLocation = { resolved, line: entry.nameLine };
+    merged.allLocations = [...merged.allLocations, { resolved, line: entry.nameLine }];
     if (entry.modelFile) {
       merged.modelFile = entry.modelFile;
       merged.modelFileSource = sourceLabel;

@@ -13,6 +13,8 @@ import { SourceLocation } from "./sourceLocation";
 export interface EffectiveIffEntry {
   name: string;
   nameLocation: SourceLocation | null;
+  /** Every location (base .tbl + every .tbm layer, in application order) where this IFF's `$IFF Name:` was touched - for "cycle through every definition" go-to-definition. */
+  allLocations: SourceLocation[];
   layerSources: string[];
 }
 
@@ -71,8 +73,10 @@ function applyLayer(result: Map<string, EffectiveIffEntry>, resolved: ResolvedFi
       continue;
     }
 
-    const merged: EffectiveIffEntry = existing ?? { name: entry.name, nameLocation: null, layerSources: [] };
+    const merged: EffectiveIffEntry =
+      existing ?? { name: entry.name, nameLocation: null, allLocations: [], layerSources: [] };
     merged.nameLocation = { resolved, line: entry.nameLine };
+    merged.allLocations = [...merged.allLocations, { resolved, line: entry.nameLine }];
     merged.layerSources = [...merged.layerSources, sourceLabel];
 
     result.set(key, merged);

@@ -653,6 +653,51 @@ suite("FSO Table Language Server", () => {
     assert.strictEqual(locations[0].range.start.line, expectedLine);
   });
 
+  test("go-to-definition on a ship's $Armor Type: returns one location per layer that touched the entry, for cycling", async () => {
+    // mymod-amr.tbm re-touches armor.tbl's "Standard" entry (with +nocreate) - so the
+    // merged armor table now has two layers' worth of history for "Standard": the base
+    // armor.tbl $Name: line, and the .tbm's $Name: line. Go-to-definition should surface
+    // both as separate Locations so VS Code's built-in peek/cycle UI can step through
+    // them, instead of only ever returning the last layer that happened to touch it.
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const armorLine = lines.findIndex((l) => l.includes("$Armor Type: Standard"));
+    assert.ok(armorLine >= 0, "fixture must contain a $Armor Type: Standard line (GTF Apollo)");
+
+    const locations = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(armorLine, lines[armorLine].length - 2),
+    )) as vscode.Location[];
+
+    assert.strictEqual(
+      locations.length,
+      2,
+      `expected 2 definition locations (armor.tbl base + mymod-amr.tbm layer), got: ${JSON.stringify(locations.map((l) => l.uri.toString()))}`,
+    );
+
+    const armorTblText = fs.readFileSync(path.join(fixturesRoot, "data/tables/armor.tbl"), "utf8");
+    const expectedBaseLine = armorTblText.split(/\r\n|\r|\n/).findIndex((l) => l.includes("$Name: Standard"));
+    const tbmText = fs.readFileSync(path.join(fixturesRoot, "data/tables/mymod-amr.tbm"), "utf8");
+    const expectedTbmLine = tbmText.split(/\r\n|\r|\n/).findIndex((l) => l.includes("$Name: Standard"));
+
+    assert.ok(
+      locations[0].uri.fsPath.endsWith(path.join("data", "tables", "armor.tbl")),
+      `expected the first location to point at armor.tbl (base layer applied first), got: ${locations[0].uri.toString()}`,
+    );
+    assert.strictEqual(locations[0].range.start.line, expectedBaseLine);
+
+    assert.ok(
+      locations[1].uri.fsPath.endsWith(path.join("data", "tables", "mymod-amr.tbm")),
+      `expected the second location to point at mymod-amr.tbm, got: ${locations[1].uri.toString()}`,
+    );
+    assert.strictEqual(locations[1].range.start.line, expectedTbmLine);
+  });
+
   test("go-to-definition works when clicking the second word of a multi-word cross-reference value", async () => {
     // Regression test: reported as "go to definition/declaration don't seem to work on
     // multi-word names". Every prior go-to-definition test happened to click a

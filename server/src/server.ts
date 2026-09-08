@@ -150,7 +150,7 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       try {
         const searchDirs = buildSearchPath(fileURLToPath(documentUri));
         const entry = getEffectiveWeaponsTable(searchDirs).get(token.name.toLowerCase());
-        return entry?.nameLocation ? toDefinitionLocation(entry.nameLocation) : null;
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
       } catch {
         return null;
       }
@@ -160,7 +160,7 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       try {
         const searchDirs = buildSearchPath(fileURLToPath(documentUri));
         const entry = getEffectiveSpeciesTable(searchDirs).get(ship.species.toLowerCase());
-        return entry?.nameLocation ? toDefinitionLocation(entry.nameLocation) : null;
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
       } catch {
         return null;
       }
@@ -170,7 +170,7 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       try {
         const searchDirs = buildSearchPath(fileURLToPath(documentUri));
         const entry = getEffectiveAiClassTable(searchDirs).get(ship.aiClass.toLowerCase());
-        return entry?.nameLocation ? toDefinitionLocation(entry.nameLocation) : null;
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
       } catch {
         return null;
       }
@@ -185,7 +185,7 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
     try {
       const searchDirs = buildSearchPath(fileURLToPath(documentUri));
       const entry = getEffectiveArmorTable(searchDirs).get(value.toLowerCase());
-      return entry?.nameLocation ? toDefinitionLocation(entry.nameLocation) : null;
+      return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
     } catch {
       return null;
     }
@@ -213,7 +213,7 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
     try {
       const searchDirs = buildSearchPath(fileURLToPath(documentUri));
       const iffEntry = getEffectiveIffTable(searchDirs).get(entry.defaultIff.toLowerCase());
-      return iffEntry?.nameLocation ? toDefinitionLocation(iffEntry.nameLocation) : null;
+      return iffEntry?.allLocations?.length ? iffEntry.allLocations.map(toDefinitionLocation) : null;
     } catch {
       return null;
     }

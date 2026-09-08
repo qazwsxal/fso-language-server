@@ -13,6 +13,8 @@ import { SourceLocation } from "./sourceLocation";
 export interface EffectiveAiClassEntry {
   name: string;
   nameLocation: SourceLocation | null;
+  /** Every location (base .tbl + every .tbm layer, in application order) where this AI class' `$Name:` was touched - for "cycle through every definition" go-to-definition. */
+  allLocations: SourceLocation[];
   layerSources: string[];
 }
 
@@ -71,8 +73,10 @@ function applyLayer(result: Map<string, EffectiveAiClassEntry>, resolved: Resolv
       continue;
     }
 
-    const merged: EffectiveAiClassEntry = existing ?? { name: entry.name, nameLocation: null, layerSources: [] };
+    const merged: EffectiveAiClassEntry =
+      existing ?? { name: entry.name, nameLocation: null, allLocations: [], layerSources: [] };
     merged.nameLocation = { resolved, line: entry.nameLine };
+    merged.allLocations = [...merged.allLocations, { resolved, line: entry.nameLine }];
     merged.layerSources = [...merged.layerSources, sourceLabel];
 
     result.set(key, merged);

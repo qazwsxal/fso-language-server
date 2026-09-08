@@ -19,9 +19,23 @@ export interface EffectiveDamageType {
 
 export interface EffectiveArmorEntry {
   name: string;
+  /** Where this armor type's `$Name:` was (last) set - the "current effective" location, for hover text. */
   nameLocation: SourceLocation | null;
-  /** Unique damage-type entries referenced by this armor type's `$Damage Type:` fields, each with where it was set. */
+  /** Every location (base .tbl + every .tbm layer, in application order) where this armor type's `$Name:` was touched - for "cycle through every definition" go-to-definition. */
+  allLocations: SourceLocation[];
+  /** Unique damage-type entries referenced by this armor type's `$Damage Type:` fields, each with where it was (last) set. */
   damageTypes: EffectiveDamageType[];
+  /**
+   * Every location where THIS armor entry has set a given damage-type string (lowercased
+   * key), accumulated across every layer that touched this entry - not just the layer
+   * that currently "wins". A later layer fully redeclaring this entry with a different
+   * damage-type list still leaves the earlier layer's now-superseded damage type's
+   * location in this history: armor.tbl entries are wholesale-replaced (see doc comment
+   * below), so the earlier value is no longer *active*, but it genuinely was defined at
+   * that location, and "cycle through every place this was defined" is about definition
+   * history, not current effective state (that's what `damageTypes` above is for).
+   */
+  damageTypeLocations: Map<string, SourceLocation[]>;
   layerSources: string[];
 }
 
@@ -79,7 +93,7 @@ export function collectDisplayDamageTypes(armorTable: Map<string, EffectiveArmor
   return Array.from(seen.values());
 }
 
-/** Every location (across every armor type) where `damageType` is set via `$Damage Type:`. */
+/** Every location (across every armor type and every layer that ever set it) where `damageType` is set via `$Damage Type:`. */
 export function findDamageTypeLocations(
   armorTable: Map<string, EffectiveArmorEntry>,
   damageType: string,
@@ -87,10 +101,9 @@ export function findDamageTypeLocations(
   const target = damageType.toLowerCase();
   const locations: SourceLocation[] = [];
   for (const entry of armorTable.values()) {
-    for (const dt of entry.damageTypes) {
-      if (dt.damageType.toLowerCase() === target) {
-        locations.push(dt.location);
-      }
+    const forThisEntry = entry.damageTypeLocations.get(target);
+    if (forThisEntry) {
+      locations.push(...forThisEntry);
     }
   }
   return locations;
@@ -121,13 +134,20 @@ function applyLayer(result: Map<string, EffectiveArmorEntry>, resolved: Resolved
       continue;
     }
 
-    const merged: EffectiveArmorEntry = existing ?? { name: entry.name, nameLocation: null, damageTypes: [], layerSources: [] };
+    const merged: EffectiveArmorEntry =
+      existing ?? { name: entry.name, nameLocation: null, allLocations: [], damageTypes: [], damageTypeLocations: new Map(), layerSources: [] };
     merged.nameLocation = { resolved, line: entry.nameLine };
+    merged.allLocations = [...merged.allLocations, { resolved, line: entry.nameLine }];
     if (entry.damageTypes.length > 0) {
       merged.damageTypes = entry.damageTypes.map((d) => ({
         damageType: d.damageType,
         location: { resolved, line: d.line },
       }));
+      for (const d of entry.damageTypes) {
+        const dtKey = d.damageType.toLowerCase();
+        const existingLocs = merged.damageTypeLocations.get(dtKey) ?? [];
+        merged.damageTypeLocations.set(dtKey, [...existingLocs, { resolved, line: d.line }]);
+      }
     }
     merged.layerSources = [...merged.layerSources, sourceLabel];
 

@@ -13,6 +13,8 @@ import { SourceLocation } from "./sourceLocation";
 export interface EffectiveSpeciesEntry {
   name: string;
   nameLocation: SourceLocation | null;
+  /** Every location (base .tbl + every .tbm layer, in application order) where this species' `$Species_Name:` was touched - for "cycle through every definition" go-to-definition. */
+  allLocations: SourceLocation[];
   layerSources: string[];
 }
 
@@ -71,8 +73,10 @@ function applyLayer(result: Map<string, EffectiveSpeciesEntry>, resolved: Resolv
       continue;
     }
 
-    const merged: EffectiveSpeciesEntry = existing ?? { name: entry.name, nameLocation: null, layerSources: [] };
+    const merged: EffectiveSpeciesEntry =
+      existing ?? { name: entry.name, nameLocation: null, allLocations: [], layerSources: [] };
     merged.nameLocation = { resolved, line: entry.nameLine };
+    merged.allLocations = [...merged.allLocations, { resolved, line: entry.nameLine }];
     merged.layerSources = [...merged.layerSources, sourceLabel];
 
     result.set(key, merged);
