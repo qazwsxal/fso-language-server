@@ -1,4 +1,5 @@
 import { TableSection } from "../parser";
+import { stripHiddenNamePrefix } from "./nameNormalization";
 
 export interface WeaponTextureRef {
   sigil: "$" | "+" | "@";
@@ -53,7 +54,7 @@ export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[
 
       if (field.sigil === "$" && key === "name") {
         current = {
-          name: field.value.trim(),
+          name: stripHiddenNamePrefix(field.value.trim()),
           nameLine: field.line,
           modelFile: null,
           modelFileLine: null,

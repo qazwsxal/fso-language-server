@@ -1,10 +1,11 @@
 #Ship Classes
 
 $Name: GTF Ulysses
-$Species: Terran
+$Species: Vasudan
 $Short name: Ulysses
 $POF file: fighter01.pof
 $Default PBanks: ( "Subach HL-7" )
+$Default SBanks: ( "Nonexistent Weapon" )
 $Armor Type: Nonexistent Armor
 $Ship_icon: iconfighter04
 $Ship_anim: nonexistent_anim
@@ -12,10 +13,11 @@ $Ship_overhead: vpctexture
 $Subsystem: engine01, 0.0, 5.0
 $Subsystem: nonexistent_part, 0.0, 5.0
 $Subsystem: turret01, 0.0, 5.0
+$Default PBanks: ( "Interceptor Cannon" "" )
 
 $Name: GTF Apollo
 $Short name: Apollo
-$Species: Terran
+$Species: Nonexistent Species
 $POF file: fighter01.pof
 $Armor Type: Standard
 

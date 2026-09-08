@@ -115,6 +115,79 @@ suite("FSO Table Language Server", () => {
     assert.ok(hoverText.includes("⚠"), `expected an armor-type warning in hover, got: ${hoverText}`);
   });
 
+  test("flags a ship $Species: that doesn't exist in species_defs.tbl, but not a real one", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+
+    const diagnostics = await waitForDiagnostics(uri);
+    const messages = diagnostics.map((d) => d.message);
+    assert.ok(
+      diagnostics.some((d) => /\$Species:.*"Nonexistent Species".*was not found in species_defs\.tbl/i.test(d.message)),
+      `expected an unresolved species diagnostic, got: ${JSON.stringify(messages)}`,
+    );
+    assert.ok(
+      messages.some((m) => /\$Species:.*"Vasudan"/i.test(m)) === false,
+      `did not expect a missing-species warning for the real "Vasudan" entry, got: ${JSON.stringify(messages)}`,
+    );
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const goodSpeciesLine = lines.findIndex((l) => l.includes("$Species: Vasudan"));
+    const badSpeciesLine = lines.findIndex((l) => l.includes("$Species: Nonexistent Species"));
+    assert.ok(goodSpeciesLine >= 0 && badSpeciesLine >= 0, "fixture must contain both a matching and mismatching $Species: line");
+
+    const goodHover = await getHoverText(uri, goodSpeciesLine);
+    assert.ok(goodHover.includes("✓"), `expected a found checkmark, got: ${goodHover}`);
+    assert.ok(goodHover.includes("species_defs.tbl"), `expected the resolved species_defs.tbl location in hover, got: ${goodHover}`);
+
+    const badHover = await getHoverText(uri, badSpeciesLine);
+    assert.ok(badHover.includes("⚠"), `expected a species warning in hover, got: ${badHover}`);
+  });
+
+  test("go-to-definition on a ship's $Species: jumps to species_defs.tbl's matching $Species_Name:", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const speciesLine = lines.findIndex((l) => l.includes("$Species: Vasudan"));
+    assert.ok(speciesLine >= 0, "fixture must contain a $Species: Vasudan line");
+
+    const locations = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(speciesLine, lines[speciesLine].length - 2),
+    )) as vscode.Location[];
+    assert.ok(locations && locations.length > 0, "expected at least one definition location");
+    assert.ok(
+      locations[0].uri.fsPath.endsWith(path.join("data", "tables", "species_defs.tbl")),
+      `expected the definition to point at species_defs.tbl, got: ${locations[0].uri.toString()}`,
+    );
+    const speciesTblText = fs.readFileSync(path.join(fixturesRoot, "data/tables/species_defs.tbl"), "utf8");
+    const expectedLine = speciesTblText.split(/\r\n|\r|\n/).findIndex((l) => l.includes("$Species_Name:\t\tVasudan"));
+    assert.strictEqual(locations[0].range.start.line, expectedLine);
+  });
+
+  test("completes a ship's $Species: value from species_defs.tbl's entry names", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const speciesLine = lines.findIndex((l) => l.includes("$Species: Vasudan"));
+
+    const list = (await vscode.commands.executeCommand(
+      "vscode.executeCompletionItemProvider",
+      uri,
+      new vscode.Position(speciesLine, lines[speciesLine].length),
+    )) as vscode.CompletionList;
+    const labels = list.items.map((i) => (typeof i.label === "string" ? i.label : i.label.label));
+    assert.ok(labels.includes("Vasudan"), `expected "Vasudan" in species completions, got: ${JSON.stringify(labels)}`);
+    assert.ok(labels.includes("Terran"), `expected "Terran" in species completions too, got: ${JSON.stringify(labels)}`);
+  });
+
   test("validates ship texture fields against what's actually on the mod's search path", async () => {
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);
@@ -482,6 +555,164 @@ suite("FSO Table Language Server", () => {
       locations.every((loc) => loc.uri.fsPath.endsWith(path.join("data", "tables", "armor.tbl"))),
       `expected every declaration location to point at armor.tbl, got: ${JSON.stringify(locations.map((l) => l.uri.toString()))}`,
     );
+  });
+
+  test("tab-completion on a $Default PBanks: weapon name completes from weapons.tbl", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const bankLine = lines.findIndex((l) => l.includes("$Default PBanks:"));
+    assert.ok(bankLine >= 0, "fixture must contain a $Default PBanks: line");
+    const quoteStart = lines[bankLine].indexOf('"Subach HL-7"') + 1;
+
+    const list = (await vscode.commands.executeCommand(
+      "vscode.executeCompletionItemProvider",
+      uri,
+      new vscode.Position(bankLine, quoteStart + "Suba".length),
+    )) as vscode.CompletionList;
+    const labels = list.items.map((i) => (typeof i.label === "string" ? i.label : i.label.label));
+    assert.ok(labels.includes("Subach HL-7"), `expected "Subach HL-7" in completions, got: ${JSON.stringify(labels)}`);
+  });
+
+  test("flags a $Default SBanks: weapon name that doesn't exist in weapons.tbl, but not a real one", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    const diagnostics = await waitForDiagnostics(uri);
+
+    const messages = diagnostics.map((d) => d.message);
+    assert.ok(
+      messages.some((m) => /\$Default SBanks:.*"Nonexistent Weapon"/i.test(m)),
+      `expected a missing-weapon warning for "Nonexistent Weapon", got: ${JSON.stringify(messages)}`,
+    );
+    assert.ok(
+      messages.some((m) => /\$Default PBanks:.*"Subach HL-7"/i.test(m)) === false,
+      `did not expect a missing-weapon warning for the real "Subach HL-7" entry, got: ${JSON.stringify(messages)}`,
+    );
+  });
+
+  test("go-to-definition on a $Default PBanks: weapon name jumps to weapons.tbl's matching $Name:", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const bankLine = lines.findIndex((l) => l.includes("$Default PBanks:"));
+    assert.ok(bankLine >= 0, "fixture must contain a $Default PBanks: line");
+    const nameCol = lines[bankLine].indexOf("Subach HL-7") + 3;
+
+    const locations = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(bankLine, nameCol),
+    )) as vscode.Location[];
+    assert.ok(locations && locations.length > 0, "expected at least one definition location");
+    assert.ok(
+      locations[0].uri.fsPath.endsWith(path.join("data", "tables", "weapons.tbl")),
+      `expected the definition to point at weapons.tbl, got: ${locations[0].uri.toString()}`,
+    );
+    const weaponsTblText = fs.readFileSync(path.join(fixturesRoot, "data/tables/weapons.tbl"), "utf8");
+    const expectedLine = weaponsTblText.split(/\r\n|\r|\n/).findIndex((l) => l.includes("$Name: Subach HL-7"));
+    assert.strictEqual(locations[0].range.start.line, expectedLine);
+  });
+
+  test("resolves a turret's own $Default PBanks: (inside $Subsystem:), not just the ship-level one", async () => {
+    // Regression test: a real Blue Planet bp-shp.tbm shows turret-level $Default
+    // PBanks:/$Default SBanks: (nested inside a $Subsystem: block) as the *majority*
+    // real-world occurrence (~81% of all bank-list lines) - the ship-level-only
+    // extraction this feature started with would silently miss almost every real
+    // weapon-bank reference.
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    const diagnostics = await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const turretBankLine = lines.findIndex((l) => l.includes('"Interceptor Cannon"'));
+    assert.ok(turretBankLine >= 0, "fixture must contain a turret-level $Default PBanks: line");
+
+    // The empty "" slot (a real, common "no weapon assigned" shape) must not be flagged.
+    const messages = diagnostics.map((d) => d.message);
+    assert.ok(
+      messages.filter((m) => m.includes("turret01")).every((m) => !/references weapon ""/i.test(m)),
+      `did not expect a missing-weapon warning for an empty bank slot, got: ${JSON.stringify(messages)}`,
+    );
+
+    const nameCol = lines[turretBankLine].indexOf("Interceptor Cannon");
+    const hovers = (await vscode.commands.executeCommand(
+      "vscode.executeHoverProvider",
+      uri,
+      new vscode.Position(turretBankLine, nameCol),
+    )) as vscode.Hover[];
+    assert.ok(hovers && hovers.length > 0, "expected a hover result on the turret's weapon name token");
+    const hoverText = hovers[0].contents
+      .map((c) => (typeof c === "string" ? c : (c as vscode.MarkdownString).value))
+      .join("\n");
+    assert.ok(hoverText.includes("✓"), `expected a found checkmark, got: ${hoverText}`);
+  });
+
+  test("matches a bank-list weapon name against a weapons.tbl entry whose $Name: has a leading @ (tech-room-hidden)", async () => {
+    // Regression test: FSO's `@` prefix on `$Name:` hides an entry from tech-room
+    // listings but is NOT part of the name used for matching elsewhere - a real
+    // Blue Planet bp-wep.tbm names ~24 weapons this way (e.g. "@Subach HL-7"), and
+    // ships' bank lists reference them WITHOUT the @ ("Subach HL-7"). Matching on the
+    // raw, unstripped $Name: value produced false "not found" warnings on some of the
+    // most common weapons in that mod.
+    const shipsUri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const shipsDoc = await vscode.workspace.openTextDocument(shipsUri);
+    await vscode.window.showTextDocument(shipsDoc);
+    const diagnostics = await waitForDiagnostics(shipsUri);
+
+    const messages = diagnostics.map((d) => d.message);
+    assert.ok(
+      messages.some((m) => /"Interceptor Cannon"/i.test(m) && /not found/i.test(m)) === false,
+      `did not expect a missing-weapon warning for "Interceptor Cannon" (defined as "@Interceptor Cannon"), got: ${JSON.stringify(messages)}`,
+    );
+
+    const lines = shipsDoc.getText().split(/\r\n|\r|\n/);
+    const turretBankLine = lines.findIndex((l) => l.includes('"Interceptor Cannon"'));
+    const nameCol = lines[turretBankLine].indexOf("Interceptor Cannon");
+
+    const locations = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      shipsUri,
+      new vscode.Position(turretBankLine, nameCol),
+    )) as vscode.Location[];
+    assert.ok(locations && locations.length > 0, "expected at least one definition location");
+    assert.ok(
+      locations[0].uri.fsPath.endsWith(path.join("data", "tables", "weapons.tbl")),
+      `expected the definition to point at weapons.tbl, got: ${locations[0].uri.toString()}`,
+    );
+    const weaponsTblText = fs.readFileSync(path.join(fixturesRoot, "data/tables/weapons.tbl"), "utf8");
+    const expectedLine = weaponsTblText.split(/\r\n|\r|\n/).findIndex((l) => l.includes("$Name: @Interceptor Cannon"));
+    assert.strictEqual(locations[0].range.start.line, expectedLine);
+  });
+
+  test("hover on a $Default PBanks: weapon name shows its found/defined status", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const bankLine = lines.findIndex((l) => l.includes("$Default PBanks:"));
+    const nameCol = lines[bankLine].indexOf("Subach HL-7") + 3;
+
+    const hovers = (await vscode.commands.executeCommand(
+      "vscode.executeHoverProvider",
+      uri,
+      new vscode.Position(bankLine, nameCol),
+    )) as vscode.Hover[];
+    assert.ok(hovers && hovers.length > 0, "expected a hover result on the weapon name token");
+    const hoverText = hovers[0].contents
+      .map((c) => (typeof c === "string" ? c : (c as vscode.MarkdownString).value))
+      .join("\n");
+    assert.ok(hoverText.includes("✓"), `expected a found checkmark, got: ${hoverText}`);
+    assert.ok(hoverText.includes("weapons.tbl"), `expected the resolved weapons.tbl location in hover, got: ${hoverText}`);
   });
 
   test("hover on a resolved texture shows its location, not just found/not-found", async () => {

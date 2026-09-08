@@ -42,6 +42,9 @@ $Name: Shivan Heavy Laser
 $end_multi_text
 $Damage Type: Laser
 
+$Name: @Interceptor Cannon
+$Damage Type: Laser
+
 #End
 
 #Secondary Weapons

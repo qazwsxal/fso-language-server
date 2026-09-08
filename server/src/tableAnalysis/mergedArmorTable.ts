@@ -8,12 +8,9 @@ import {
   describeResolvedSource,
   ResolvedFile,
 } from "../modResolution/resolver";
+import { SourceLocation } from "./sourceLocation";
 
-/** Where a merged value actually came from - enough to build an LSP go-to-definition Location, loose file or inside a VP. */
-export interface SourceLocation {
-  resolved: ResolvedFile;
-  line: number;
-}
+export { SourceLocation };
 
 export interface EffectiveDamageType {
   damageType: string;

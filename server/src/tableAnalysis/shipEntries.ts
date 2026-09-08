@@ -1,4 +1,5 @@
 import { TableSection } from "../parser";
+import { stripHiddenNamePrefix } from "./nameNormalization";
 
 export interface ShipSubsystemRef {
   line: number;
@@ -6,6 +7,15 @@ export interface ShipSubsystemRef {
   raw: string;
   /** First comma-separated token - the submodel/subsystem name that should match a POF SOBJ/OBJ2 name. */
   name: string;
+  /**
+   * Per-turret loadout - confirmed against a real Blue Planet bp-shp.tbm that
+   * `$Default PBanks:`/`$Default SBanks:` occurring inside a `$Subsystem:` block
+   * (turret loadout) is actually the *majority* real-world occurrence (~81% of all
+   * bank-list lines in that mod's ships), not an edge case - every one of these needs
+   * the same weapon-name cross-referencing as the ship-level fields below.
+   */
+  defaultPrimaryBanks: ShipBankList | null;
+  defaultSecondaryBanks: ShipBankList | null;
 }
 
 /** A "$Default PBanks:"/"$Default SBanks:" weapon-name list, one entry per gun/missile bank. */
@@ -47,6 +57,9 @@ export interface ShipEntryInfo {
   armorTypeLine: number | null;
   shieldArmorType: string | null;
   shieldArmorTypeLine: number | null;
+  /** From `$Species:` - references a species_defs.tbl `$Species_Name:` entry. Ship-level only, same `$Subsystem:`-scoping caveat as the other cross-referencing fields above (species has no per-subsystem meaning, but scoping stays consistent for simplicity). */
+  species: string | null;
+  speciesLine: number | null;
   /** Bitmap/animation-referencing fields, confirmed against ship.cpp's field list. */
   textureRefs: ShipTextureRef[];
   /** Modular-table-only sentinels (see fso-table-format): only relevant when merging .tbm layers. */
@@ -72,6 +85,7 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
   const entries: ShipEntryInfo[] = [];
   let current: ShipEntryInfo | null = null;
   let inSubsystemScope = false;
+  let currentSubsystem: ShipSubsystemRef | null = null;
 
   for (const section of sections) {
     if (section.name.trim().toLowerCase() !== "ship classes") {
@@ -83,7 +97,7 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
 
       if (field.sigil === "$" && key === "name") {
         current = {
-          name: field.value.trim(),
+          name: stripHiddenNamePrefix(field.value.trim()),
           nameLine: field.line,
           modelFile: null,
           subsystems: [],
@@ -93,12 +107,15 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           armorTypeLine: null,
           shieldArmorType: null,
           shieldArmorTypeLine: null,
+          species: null,
+          speciesLine: null,
           textureRefs: [],
           noCreate: false,
           remove: false,
         };
         entries.push(current);
         inSubsystemScope = false;
+        currentSubsystem = null;
         continue;
       }
       if (!current) {
@@ -117,7 +134,8 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
       if (key === "subsystem") {
         inSubsystemScope = true;
         const name = field.value.split(",")[0].trim();
-        current.subsystems.push({ line: field.line, raw: field.value, name });
+        currentSubsystem = { line: field.line, raw: field.value, name, defaultPrimaryBanks: null, defaultSecondaryBanks: null };
+        current.subsystems.push(currentSubsystem);
         continue;
       }
 
@@ -126,9 +144,16 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
       }
 
       if (inSubsystemScope) {
-        // $Armor Type:/$Default PBanks:/$Default SBanks: also occur per-subsystem;
-        // once inside a $Subsystem: block, don't let those overwrite the ship-level
-        // values captured before the first $Subsystem: line.
+        // $Armor Type: also occurs per-subsystem; once inside a $Subsystem: block, don't
+        // let it overwrite the ship-level value captured before the first $Subsystem:
+        // line. $Default PBanks:/$Default SBanks: DO get attributed here though - a
+        // turret's own bank list, confirmed as the majority real-world occurrence (see
+        // ShipSubsystemRef doc comment).
+        if (currentSubsystem && key === "default pbanks") {
+          currentSubsystem.defaultPrimaryBanks = { line: field.line, weaponNames: splitBankList(field.value) };
+        } else if (currentSubsystem && key === "default sbanks") {
+          currentSubsystem.defaultSecondaryBanks = { line: field.line, weaponNames: splitBankList(field.value) };
+        }
         continue;
       }
 
@@ -144,6 +169,9 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
       } else if (key === "shield armor type") {
         current.shieldArmorType = field.value.trim();
         current.shieldArmorTypeLine = field.line;
+      } else if (key === "species") {
+        current.species = field.value.trim();
+        current.speciesLine = field.line;
       }
     }
   }

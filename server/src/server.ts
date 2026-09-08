@@ -19,6 +19,7 @@ import {
   Location,
   DefinitionParams,
   DeclarationParams,
+  Position,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { parseTable, ParseResult, ParseDiagnostic, TableSection } from "./parser";
@@ -27,7 +28,7 @@ import { validateAgainstSchema } from "./schemaValidator";
 import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef } from "./tableAnalysis/shipEntries";
 import { buildEffectiveShipTable, EffectiveShipEntry } from "./tableAnalysis/mergedShipTable";
 import { extractWeaponEntries, WeaponEntryInfo, WeaponTextureRef } from "./tableAnalysis/weaponEntries";
-import { buildEffectiveWeaponsTable, EffectiveWeaponEntry } from "./tableAnalysis/mergedWeaponsTable";
+import { buildEffectiveWeaponsTable, collectDisplayWeaponNames, EffectiveWeaponEntry } from "./tableAnalysis/mergedWeaponsTable";
 import {
   buildEffectiveArmorTable,
   collectAllDamageTypes,
@@ -36,6 +37,7 @@ import {
   EffectiveArmorEntry,
   SourceLocation,
 } from "./tableAnalysis/mergedArmorTable";
+import { buildEffectiveSpeciesTable, collectDisplaySpeciesNames, EffectiveSpeciesEntry } from "./tableAnalysis/mergedSpeciesTable";
 import {
   buildSearchPath,
   resolveModelFile,
@@ -133,6 +135,32 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
 
   const ships = shipEntriesByUri.get(documentUri) ?? [];
   for (const ship of ships) {
+    const bankList = findBankListAtLine(ship, line);
+    if (bankList) {
+      const doc = documents.get(documentUri);
+      const token = doc ? findBankNameTokenAt(doc, line, params.position.character) : null;
+      if (!token || !token.name) {
+        return null;
+      }
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveWeaponsTable(searchDirs).get(token.name.toLowerCase());
+        return entry?.nameLocation ? toDefinitionLocation(entry.nameLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    if (ship.speciesLine === line && ship.species) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveSpeciesTable(searchDirs).get(ship.species.toLowerCase());
+        return entry?.nameLocation ? toDefinitionLocation(entry.nameLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
     const isArmor = ship.armorTypeLine === line && ship.armorType;
     const isShieldArmor = ship.shieldArmorTypeLine === line && ship.shieldArmorType;
     if (!isArmor && !isShieldArmor) {
@@ -195,6 +223,7 @@ connection.onDidChangeWatchedFiles(() => {
   effectiveShipTableCache.clear();
   effectiveWeaponsTableCache.clear();
   effectiveArmorTableCache.clear();
+  effectiveSpeciesTableCache.clear();
   textureIndexCache.clear();
   textureNamesSortedCache.clear();
 });
@@ -210,8 +239,10 @@ function validateAndPublish(document: TextDocument): void {
   const ships = shipEntriesByUri.get(document.uri) ?? [];
   const weapons = weaponEntriesByUri.get(document.uri) ?? [];
   const bankCountDiagnostics = computeBankCountDiagnostics(document.uri, ships);
+  const bankWeaponNameDiagnostics = computeBankWeaponNameDiagnostics(document.uri, ships);
   const weaponModelDiagnostics = computeWeaponModelDiagnostics(document.uri, weapons);
   const armorTypeDiagnostics = computeArmorTypeDiagnostics(document.uri, ships);
+  const speciesDiagnostics = computeSpeciesDiagnostics(document.uri, ships);
   const damageTypeDiagnostics = computeDamageTypeDiagnostics(document.uri, weapons);
   const textureDiagnostics = computeTextureDiagnostics(document.uri, ships, weapons);
 
@@ -219,8 +250,10 @@ function validateAndPublish(document: TextDocument): void {
     ...result.diagnostics,
     ...schemaDiagnostics,
     ...bankCountDiagnostics,
+    ...bankWeaponNameDiagnostics,
     ...weaponModelDiagnostics,
     ...armorTypeDiagnostics,
+    ...speciesDiagnostics,
     ...damageTypeDiagnostics,
     ...textureDiagnostics,
   ].map((d) => ({
@@ -384,6 +417,22 @@ function getEffectiveArmorTable(searchDirs: string[]): Map<string, EffectiveArmo
 }
 
 /**
+ * Cache of the merged/effective species_defs.tbl view, mirroring the armor/ship/weapons caches.
+ */
+const effectiveSpeciesTableCache = new Map<string, Map<string, EffectiveSpeciesEntry>>();
+
+function getEffectiveSpeciesTable(searchDirs: string[]): Map<string, EffectiveSpeciesEntry> {
+  const key = searchDirs.join("|");
+  const cached = effectiveSpeciesTableCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const table = buildEffectiveSpeciesTable(searchDirs);
+  effectiveSpeciesTableCache.set(key, table);
+  return table;
+}
+
+/**
  * Cache of the texture/animation basename index (see textureIndex.ts), keyed by the
  * joined search-path directory list - same cache-key convention as the merged-table
  * caches above.
@@ -488,6 +537,42 @@ function computeDamageTypeDiagnostics(documentUri: string, weapons: WeaponEntryI
           startCol: 0,
           endCol: 1000,
           message: `$Damage Type: "${weapon.damageType}" is not referenced by any armor.tbl $Damage Type: entry (checked across the active mod's search path) - it will get no armor-specific multiplier`,
+          severity: "warning",
+        });
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Cross-table check: a ship's `$Species:` should name a species_defs.tbl
+ * `$Species_Name:` entry. A ship with an unresolvable species falls back to whatever the
+ * engine's default species handling does rather than the intended one - worth flagging
+ * like every other cross-reference in this file.
+ */
+function computeSpeciesDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let speciesTable: Map<string, EffectiveSpeciesEntry> | null = null;
+
+  for (const ship of ships) {
+    if (!ship.species || ship.speciesLine === null) {
+      continue;
+    }
+    try {
+      if (!speciesTable) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        speciesTable = getEffectiveSpeciesTable(searchDirs);
+      }
+      if (!speciesTable.has(ship.species.toLowerCase())) {
+        diagnostics.push({
+          line: ship.speciesLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$Species: "${ship.species}" was not found in species_defs.tbl (checked across the active mod's search path)`,
           severity: "warning",
         });
       }
@@ -634,6 +719,142 @@ function computeLineValueRange(doc: TextDocument, line: number): Range {
   return { start: { line, character: valueStart }, end: { line, character: valueEnd } };
 }
 
+/**
+ * A single quoted weapon name inside a `$Default PBanks:`/`$Default SBanks:` value
+ * (`( "Name" "Name" ... )`), with the exact range of the text between its quotes - used
+ * to give per-name hover/go-to-definition on a bank list rather than treating the whole
+ * line as one opaque value the way the bank-count check does.
+ */
+interface BankNameToken {
+  name: string;
+  range: Range;
+}
+
+/** Every closed `"..."` quoted token on `line`, in document order. For hover/go-to-definition, where the document is settled and every quote is expected to be closed. */
+function computeBankNameTokens(doc: TextDocument, line: number): BankNameToken[] {
+  const fullLine = doc
+    .getText({ start: { line, character: 0 }, end: { line: line + 1, character: 0 } })
+    .replace(/\r?\n$/, "");
+  const tokens: BankNameToken[] = [];
+  const quoteRe = /"([^"]*)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = quoteRe.exec(fullLine))) {
+    const start = match.index + 1;
+    const end = start + match[1].length;
+    tokens.push({ name: match[1].trim(), range: { start: { line, character: start }, end: { line, character: end } } });
+  }
+  return tokens;
+}
+
+/** The closed quoted token (see computeBankNameTokens) that `character` falls within, if any. */
+function findBankNameTokenAt(doc: TextDocument, line: number, character: number): BankNameToken | null {
+  return computeBankNameTokens(doc, line).find((t) => character >= t.range.start.character && character <= t.range.end.character) ?? null;
+}
+
+/**
+ * The range of the quote the cursor is currently *inside* while typing (which may not
+ * be closed yet - e.g. `( "Subach` with the cursor right after the `h`) - used to give
+ * weapon-name completions inside a bank list an explicit textEdit range, same rationale
+ * as computeLineValueRange for whole-value texture fields. Returns null when the cursor
+ * isn't inside an open quote (e.g. sitting between entries, on the parens/whitespace).
+ */
+function computeOpenBankTokenRange(doc: TextDocument, position: Position): Range | null {
+  const fullLine = doc
+    .getText({ start: { line: position.line, character: 0 }, end: { line: position.line + 1, character: 0 } })
+    .replace(/\r?\n$/, "");
+  const before = fullLine.slice(0, position.character);
+  const quotesBefore = (before.match(/"/g) ?? []).length;
+  if (quotesBefore % 2 === 0) {
+    return null;
+  }
+  const startQuote = before.lastIndexOf('"');
+  let endQuote = fullLine.indexOf('"', position.character);
+  if (endQuote === -1) {
+    endQuote = fullLine.length;
+  }
+  return { start: { line: position.line, character: startQuote + 1 }, end: { line: position.line, character: endQuote } };
+}
+
+/**
+ * The bank list (if any) whose line matches `line` - `$Default PBanks:`/
+ * `$Default SBanks:` can occur once at ship level and/or once per `$Subsystem:` block
+ * (a turret's own loadout - confirmed as the *majority* real-world occurrence, see
+ * ShipSubsystemRef's doc comment in shipEntries.ts).
+ */
+function findBankListAtLine(ship: ShipEntryInfo, line: number): { weaponNames: string[] } | null {
+  if (ship.defaultPrimaryBanks?.line === line) {
+    return ship.defaultPrimaryBanks;
+  }
+  if (ship.defaultSecondaryBanks?.line === line) {
+    return ship.defaultSecondaryBanks;
+  }
+  for (const subsystem of ship.subsystems) {
+    if (subsystem.defaultPrimaryBanks?.line === line) {
+      return subsystem.defaultPrimaryBanks;
+    }
+    if (subsystem.defaultSecondaryBanks?.line === line) {
+      return subsystem.defaultSecondaryBanks;
+    }
+  }
+  return null;
+}
+
+/**
+ * Cross-checks each weapon name in a ship's `$Default PBanks:`/`$Default SBanks:` list
+ * against the merged weapons.tbl - a typo'd or removed weapon name here silently loads
+ * as "no weapon in that bank" rather than erroring, so it's worth flagging like every
+ * other cross-reference in this file.
+ */
+function computeBankWeaponNameDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let weaponsTable: Map<string, EffectiveWeaponEntry> | null = null;
+
+  const lists: { line: number; weaponNames: string[]; label: string }[] = [];
+  for (const ship of ships) {
+    if (ship.defaultPrimaryBanks) {
+      lists.push({ line: ship.defaultPrimaryBanks.line, weaponNames: ship.defaultPrimaryBanks.weaponNames, label: "$Default PBanks:" });
+    }
+    if (ship.defaultSecondaryBanks) {
+      lists.push({ line: ship.defaultSecondaryBanks.line, weaponNames: ship.defaultSecondaryBanks.weaponNames, label: "$Default SBanks:" });
+    }
+    for (const subsystem of ship.subsystems) {
+      if (subsystem.defaultPrimaryBanks) {
+        lists.push({ line: subsystem.defaultPrimaryBanks.line, weaponNames: subsystem.defaultPrimaryBanks.weaponNames, label: `$Default PBanks: (turret "${subsystem.name}")` });
+      }
+      if (subsystem.defaultSecondaryBanks) {
+        lists.push({ line: subsystem.defaultSecondaryBanks.line, weaponNames: subsystem.defaultSecondaryBanks.weaponNames, label: `$Default SBanks: (turret "${subsystem.name}")` });
+      }
+    }
+  }
+
+  for (const list of lists) {
+    for (const name of list.weaponNames) {
+      if (!name) {
+        continue;
+      }
+      try {
+        if (!weaponsTable) {
+          const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+          weaponsTable = getEffectiveWeaponsTable(searchDirs);
+        }
+        if (!weaponsTable.has(name.toLowerCase())) {
+          diagnostics.push({
+            line: list.line,
+            startCol: 0,
+            endCol: 1000,
+            message: `${list.label} references weapon "${name}" which was not found in weapons.tbl (checked across the active mod's search path)`,
+            severity: "warning",
+          });
+        }
+      } catch {
+        // Can't resolve a search path for this document - skip silently.
+      }
+    }
+  }
+
+  return diagnostics;
+}
+
 connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) {
@@ -657,6 +878,29 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
           kind: CompletionItemKind.Reference,
           detail: `Subsystem in ${current?.modelFile}`,
         }));
+    }
+  }
+
+  if (/^\s*\$Default\s+[PS]Banks\s*:/i.test(linePrefix)) {
+    const ships = shipEntriesByUri.get(params.textDocument.uri) ?? [];
+    const current = findCurrentShipEntry(ships, params.position.line);
+    const list = current ? findBankListAtLine(current, params.position.line) : null;
+    if (list) {
+      const range = computeOpenBankTokenRange(doc, params.position);
+      if (range) {
+        try {
+          const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+          const names = collectDisplayWeaponNames(getEffectiveWeaponsTable(searchDirs)).sort();
+          return names.map((name) => ({
+            label: name,
+            kind: CompletionItemKind.Reference,
+            filterText: name,
+            textEdit: { range, newText: name },
+          }));
+        } catch {
+          return [];
+        }
+      }
     }
   }
 
@@ -694,6 +938,22 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
             : Array.from(armorTable.values())
                 .map((e) => e.name)
                 .sort();
+        return names.map((name) => ({
+          label: name,
+          kind: CompletionItemKind.EnumMember,
+          filterText: name,
+          textEdit: { range, newText: name },
+        }));
+      } catch {
+        return [];
+      }
+    }
+
+    if (fieldKey === "species") {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const names = collectDisplaySpeciesNames(getEffectiveSpeciesTable(searchDirs)).sort();
+        const range = computeLineValueRange(doc, params.position.line);
         return names.map((name) => ({
           label: name,
           kind: CompletionItemKind.EnumMember,
@@ -781,6 +1041,7 @@ function findTextureHover(
 }
 
 connection.onHover((params): Hover | null => {
+  const hoverDoc = documents.get(params.textDocument.uri);
   const weapons = weaponEntriesByUri.get(params.textDocument.uri) ?? [];
 
   const weaponAtLine = weapons.find(
@@ -910,19 +1171,60 @@ connection.onHover((params): Hover | null => {
       }
     }
 
-    if (ship.defaultPrimaryBanks?.line === params.position.line || ship.defaultSecondaryBanks?.line === params.position.line) {
-      const isPrimary = ship.defaultPrimaryBanks?.line === params.position.line;
-      const bankList = isPrimary ? ship.defaultPrimaryBanks : ship.defaultSecondaryBanks;
-      const pof = resolvePofForShipEntry(params.textDocument.uri, ship);
-      const actualCount = isPrimary ? pof?.primaryBankCount ?? null : pof?.secondaryBankCount ?? null;
-      const declared = bankList?.weaponNames.length ?? 0;
+    if (ship.speciesLine === params.position.line && ship.species) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry = getEffectiveSpeciesTable(searchDirs).get(ship.species.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**$Species: ${ship.species}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**$Species: ${ship.species}** ⚠️\n\nNot found in species_defs.tbl along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    const hoveredBankList = findBankListAtLine(ship, params.position.line);
+    if (hoveredBankList) {
+      const isShipLevel = ship.defaultPrimaryBanks?.line === params.position.line || ship.defaultSecondaryBanks?.line === params.position.line;
+      const isPrimary =
+        ship.defaultPrimaryBanks?.line === params.position.line ||
+        ship.subsystems.some((s) => s.defaultPrimaryBanks?.line === params.position.line);
+
+      const token = hoverDoc ? findBankNameTokenAt(hoverDoc, params.position.line, params.position.character) : null;
+      if (token && token.name) {
+        try {
+          const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+          const entry = getEffectiveWeaponsTable(searchDirs).get(token.name.toLowerCase());
+          return {
+            contents: {
+              kind: "markdown",
+              value: entry?.nameLocation
+                ? `**${token.name}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+                : `**${token.name}** ⚠️\n\nNot found in weapons.tbl along the active mod's search path.`,
+            },
+          };
+        } catch {
+          // Fall through to the whole-line bank summary below.
+        }
+      }
+
+      const declared = hoveredBankList.weaponNames.length;
       const label = isPrimary ? "$Default PBanks:" : "$Default SBanks:";
-      const status =
-        actualCount === null ? "" : declared === actualCount ? " ✓" : ` ⚠️ (model has ${actualCount})`;
+      let status = "";
+      if (isShipLevel) {
+        const pof = resolvePofForShipEntry(params.textDocument.uri, ship);
+        const actualCount = isPrimary ? pof?.primaryBankCount ?? null : pof?.secondaryBankCount ?? null;
+        status = actualCount === null ? "" : declared === actualCount ? " ✓" : ` ⚠️ (model has ${actualCount})`;
+      }
       return {
         contents: {
           kind: "markdown",
-          value: `**${label}**${status}\n\nDeclares ${declared} bank(s): ${bankList?.weaponNames.map((n) => `\`${n}\``).join(", ") || "(none)"}`,
+          value: `**${label}**${status}\n\nDeclares ${declared} bank(s): ${hoveredBankList.weaponNames.map((n) => (n ? `\`${n}\`` : "`(none)`")).join(", ") || "(none)"}`,
         },
       };
     }

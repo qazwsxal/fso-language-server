@@ -1,0 +1,11 @@
+#Species Defs
+
+$Species_Name:		Terran
+$Default IFF:		Friendly
+$FRED Color:		( 0, 0, 168 )
+
+$Species_Name:		Vasudan
+$Default IFF:		Friendly
+$FRED Color:		( 128, 128, 0 )
+
+#End

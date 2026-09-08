@@ -8,13 +8,21 @@ import {
   describeResolvedSource,
   ResolvedFile,
 } from "../modResolution/resolver";
+import { SourceLocation } from "./sourceLocation";
 
 export interface EffectiveWeaponEntry {
   name: string;
+  /** Where this weapon's `$Name:` was (last) set - for go-to-definition from a ship's `$Default PBanks:`/`$Default SBanks:` weapon-name list. */
+  nameLocation: SourceLocation | null;
   modelFile: string | null;
   modelFileSource: string | null;
   /** Every file that touched this entry, in application order (base .tbl first, then .tbm layers lowest-to-highest priority). */
   layerSources: string[];
+}
+
+/** Unique weapon names in their original (first-seen) casing - for completion display, where lowercasing would look wrong. */
+export function collectDisplayWeaponNames(weaponsTable: Map<string, EffectiveWeaponEntry>): string[] {
+  return Array.from(weaponsTable.values()).map((e) => e.name);
 }
 
 /**
@@ -73,11 +81,13 @@ function applyLayer(result: Map<string, EffectiveWeaponEntry>, resolved: Resolve
     const merged: EffectiveWeaponEntry =
       existing ?? {
         name: entry.name,
+        nameLocation: null,
         modelFile: null,
         modelFileSource: null,
         layerSources: [],
       };
 
+    merged.nameLocation = { resolved, line: entry.nameLine };
     if (entry.modelFile) {
       merged.modelFile = entry.modelFile;
       merged.modelFileSource = sourceLabel;
