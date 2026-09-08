@@ -1031,16 +1031,18 @@ suite("FSO Table Language Server", () => {
     );
   });
 
-  test("a $Subsystem: name is a ctrl+click-able DocumentLink pointing at the 3D viewer command", async () => {
-    // Restores ctrl+click support (removed above to fix the hover-triggers-open bug)
-    // via a DIFFERENT VSCode mechanism than go-to-definition: a DocumentLink. Unlike a
-    // DefinitionProvider, provideDocumentLinks is computed once per document and is
-    // itself side-effect-free - only clicking the link's `command:` target actually
-    // opens the viewer, so this doesn't reintroduce the "opens on mere hover" bug. This
-    // test can't simulate a real mouse click, but it does verify: (1) the link exists
-    // over the right text range, pointing at the right command with the right
-    // arguments, and (2) invoking that exact command (what a real click does) opens the
-    // viewer - together these cover everything a real ctrl+click would exercise.
+  test("hovering a $Subsystem: line offers a trusted 'Open 3D view' command link", async () => {
+    // Restores mouse-driven access (a DocumentLink-based ctrl+click attempt, removed
+    // here, turned out not to work - VSCode's built-in document-link click handler
+    // treats a link's target purely as a resource to open, not a command to execute,
+    // regardless of scheme; a trusted MarkdownString's command links ARE reliably
+    // honored, which a Hover can provide). Hover computation is itself side-effect-free
+    // no matter how often it's invoked, so this doesn't reintroduce the "opens on mere
+    // hover" bug fixed earlier: nothing happens until the user actually clicks the link
+    // inside the tooltip. This test can't simulate a real click on that rendered link,
+    // but it does verify (1) the hover exists with a well-formed, trusted command link
+    // for the right command/arguments, and (2) invoking that exact command (what
+    // clicking the link does) opens the viewer.
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);
     await vscode.window.showTextDocument(doc);
@@ -1050,15 +1052,22 @@ suite("FSO Table Language Server", () => {
     const turretLine = lines.findIndex((l) => l.includes("$Subsystem: turret01"));
     assert.ok(turretLine >= 0, "fixture must contain a $Subsystem: turret01 line");
 
-    const links = (await vscode.commands.executeCommand("vscode.executeLinkProvider", uri)) as vscode.DocumentLink[];
-    const link = links.find((l) => l.range.start.line === turretLine);
-    assert.ok(link, `expected a DocumentLink on the $Subsystem: turret01 line, got links on lines: ${JSON.stringify(links.map((l) => l.range.start.line))}`);
-    assert.ok(
-      link!.target?.toString().startsWith("command:fsoLsp.openPofViewerAtPosition"),
-      `expected the link's target to invoke fsoLsp.openPofViewerAtPosition, got: ${link!.target?.toString()}`,
+    const hovers = (await vscode.commands.executeCommand(
+      "vscode.executeHoverProvider",
+      uri,
+      new vscode.Position(turretLine, 2),
+    )) as vscode.Hover[];
+    const linkHover = hovers.find((h) =>
+      h.contents.some((c) => {
+        const value = typeof c === "string" ? c : (c as vscode.MarkdownString).value;
+        return value.includes("command:fsoLsp.openPofViewerAtPosition");
+      }),
     );
-    const linkedText = doc.getText(link!.range);
-    assert.strictEqual(linkedText, "turret01", `expected the link to cover just the subsystem name, got: "${linkedText}"`);
+    assert.ok(linkHover, `expected a hover offering the 3D-view command link, got: ${JSON.stringify(hovers)}`);
+    const markdown = linkHover!.contents.find(
+      (c) => typeof c !== "string" && (c as vscode.MarkdownString).value.includes("command:fsoLsp.openPofViewerAtPosition"),
+    ) as vscode.MarkdownString;
+    assert.ok(markdown.isTrusted, "expected the command-link MarkdownString to be marked isTrusted (required for the link to actually run)");
 
     // Not asserting on a tab-count *increase*: an earlier test in this suite may have
     // already opened (and left open) the same model's panel, which this would then
@@ -1066,7 +1075,7 @@ suite("FSO Table Language Server", () => {
     // tab - reuse is the correct, intended behavior, not something to work around here.
     await vscode.commands.executeCommand("fsoLsp.openPofViewerAtPosition", uri.toString(), turretLine);
     const opened = await waitFor(() => countPofViewerTabs() > 0, 5000);
-    assert.ok(opened, "expected activating the link's target command to open the 3D POF viewer");
+    assert.ok(opened, "expected activating the hover link's target command to open the 3D POF viewer");
   });
 
   test("F12 elsewhere in ships.tbl falls through to normal go-to-definition instead of opening the 3D viewer", async () => {
@@ -1111,6 +1120,12 @@ async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boo
   return predicate();
 }
 
+/**
+ * Concatenates every registered hover provider's content at this position, not just the
+ * first result - VSCode itself stacks all of them into one tooltip, and (since the
+ * client's own `$Subsystem:` "Open 3D view" command-link hover was added) more than one
+ * provider can legitimately contribute a hover for the same line, in either order.
+ */
 async function getHoverText(uri: vscode.Uri, line: number): Promise<string> {
   const hovers = (await vscode.commands.executeCommand(
     "vscode.executeHoverProvider",
@@ -1118,8 +1133,8 @@ async function getHoverText(uri: vscode.Uri, line: number): Promise<string> {
     new vscode.Position(line, 5),
   )) as vscode.Hover[];
   assert.ok(hovers && hovers.length > 0, `expected at least one hover result at line ${line}`);
-  return hovers[0].contents
-    .map((c) => (typeof c === "string" ? c : (c as vscode.MarkdownString).value))
+  return hovers
+    .flatMap((h) => h.contents.map((c) => (typeof c === "string" ? c : (c as vscode.MarkdownString).value)))
     .join("\n");
 }
 

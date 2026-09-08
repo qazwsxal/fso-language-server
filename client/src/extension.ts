@@ -7,9 +7,9 @@ import {
   languages,
   Uri,
   TextDocumentContentProvider,
-  DocumentLink,
-  DocumentLinkProvider,
-  Range,
+  Hover,
+  HoverProvider,
+  MarkdownString,
 } from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
 import { showPofViewer, PofGeometryForSubsystemResult } from "./pofViewer";
@@ -141,7 +141,7 @@ export function activate(context: ExtensionContext): void {
     }),
   );
 
-  /** Invoked only by the DocumentLink below - see its doc comment for why this is a separate, explicit-args command rather than reading the active editor's cursor position. */
+  /** Invoked only by the hover link below - see its doc comment for why this is a separate, explicit-args command rather than reading the active editor's cursor position. */
   context.subscriptions.push(
     commands.registerCommand("fsoLsp.openPofViewerAtPosition", (uriString: string, line: number) => {
       void openPofViewerAt(uriString, line);
@@ -149,50 +149,42 @@ export function activate(context: ExtensionContext): void {
   );
 
   /**
-   * Restores ctrl+click for `$Subsystem:` lines specifically, using a *different*
-   * VSCode mechanism than go-to-definition: a DocumentLink. Unlike a DefinitionProvider,
-   * `provideDocumentLinks` is called once per document (re-parse), not on every
-   * ctrl+hover mouse move, and is itself side-effect-free - it only returns link ranges
-   * + targets for VSCode to underline. The side effect (opening the viewer) only runs
-   * when the link's target `command:` URI is actually activated by a real click -
-   * VSCode's documented gesture for that is the same Ctrl/Cmd+Click used for go-to-
-   * definition (see the `DocumentLink.tooltip` doc comment: "{0} (ctrl + click)"), so
-   * this reproduces the original ctrl+click UX without reintroducing the hover bug
-   * fixed above. The target is a `command:` URI carrying explicit (uri, line) arguments
-   * - see openPofViewerAtPosition above - rather than reading the active editor's
-   * current cursor position, since a link click has no guaranteed effect on the
-   * cursor/selection.
+   * Attempted to restore ctrl+click for `$Subsystem:` lines via a `DocumentLink`
+   * (provideDocumentLinks is computed once per document, not on every ctrl+hover mouse
+   * move, so it doesn't have the DefinitionProvider hover-bug fixed above) - but a
+   * DocumentLink's `command:`-scheme target turns out NOT to be honored the way a
+   * trusted MarkdownString's is: VSCode's built-in "open this link" handler treats
+   * `target` purely as a resource to open (effectively via `vscode.open`), not as a
+   * command to execute, so clicking it did nothing. Confirmed in practice (ctrl+click
+   * silently not working) after implementing it - the API surface allows constructing
+   * such a link, it just isn't wired up to actually run commands.
+   *
+   * A `Hover` whose content is an `isTrusted` `MarkdownString` IS a genuinely reliable,
+   * documented way to run a command from a click - VSCode's Markdown renderer
+   * specifically special-cases `command:` links there (unlike the generic document-link
+   * opener above). Hover computation is itself side-effect-free regardless of how often
+   * it's invoked (it can't be, any more than it already is for every other hover in this
+   * extension), so this doesn't reintroduce the earlier bug: nothing happens until the
+   * user actually clicks the "Open 3D view" link inside the tooltip. This trades a
+   * literal single ctrl+click on the bare text for "hover, then click the link in the
+   * tooltip" - not pixel-identical to go-to-definition's gesture, but the closest
+   * reliably-working mouse-driven equivalent; F12 remains the exact one-step gesture.
    */
-  const subsystemLinkProvider: DocumentLinkProvider = {
-    provideDocumentLinks(document) {
-      const links: DocumentLink[] = [];
-      for (let line = 0; line < document.lineCount; line++) {
-        const text = document.lineAt(line).text;
-        const match = /^\s*\$Subsystem\s*:\s*/i.exec(text);
-        if (!match) {
-          continue;
-        }
-        const nameStart = match[0].length;
-        const commaIdx = text.indexOf(",", nameStart);
-        let nameEnd = commaIdx === -1 ? text.length : commaIdx;
-        while (nameEnd > nameStart && /\s/.test(text[nameEnd - 1])) {
-          nameEnd--;
-        }
-        if (nameEnd <= nameStart) {
-          continue;
-        }
-        const args = encodeURIComponent(JSON.stringify([document.uri.toString(), line]));
-        const link = new DocumentLink(
-          new Range(line, nameStart, line, nameEnd),
-          Uri.parse(`command:fsoLsp.openPofViewerAtPosition?${args}`),
-        );
-        link.tooltip = "Open 3D view";
-        links.push(link);
+  const subsystemHoverProvider: HoverProvider = {
+    provideHover(document, position) {
+      const text = document.lineAt(position.line).text;
+      const match = /^\s*\$Subsystem\s*:\s*/i.exec(text);
+      if (!match) {
+        return undefined;
       }
-      return links;
+      const args = encodeURIComponent(JSON.stringify([document.uri.toString(), position.line]));
+      const markdown = new MarkdownString(`[$(eye) Open 3D view](command:fsoLsp.openPofViewerAtPosition?${args})`);
+      markdown.isTrusted = true;
+      markdown.supportThemeIcons = true;
+      return new Hover(markdown);
     },
   };
-  context.subscriptions.push(languages.registerDocumentLinkProvider({ language: "fso-table" }, subsystemLinkProvider));
+  context.subscriptions.push(languages.registerHoverProvider({ language: "fso-table" }, subsystemHoverProvider));
 }
 
 export function deactivate(): Thenable<void> | undefined {
