@@ -27,17 +27,31 @@ interface GeometryMessage {
   submodels: SubmodelPayload[];
 }
 
+/** Sent instead of a full GeometryMessage when re-triggering F12 on a different `$Subsystem:` of the SAME, already-rendered model - see pofViewer.ts's fingerprint() doc comment. */
+interface HighlightMessage {
+  type: "highlight";
+  targetSubmodelIndex: number;
+}
+
 declare function acquireVsCodeApi(): {
   postMessage: (msg: unknown) => void;
   getState: () => unknown;
   setState: (s: unknown) => void;
 };
 
+const NORMAL_COLOR = 0x8899aa;
+const HIGHLIGHT_COLOR = 0xffcc33;
+const HIGHLIGHT_EMISSIVE = 0x664400;
+
 let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
 let renderer: THREE.WebGLRenderer | null = null;
 let controls: OrbitControls | null = null;
 let currentGroup: THREE.Group | null = null;
+/** The currently-rendered model's meshes, keyed by submodel index - lets applyHighlight() recolor in place instead of rebuilding the scene when only the highlighted subsystem changes. */
+let currentMeshes: Map<number, THREE.Mesh> | null = null;
+let currentTargetIndex = -1;
+let currentWireframe: THREE.LineSegments | null = null;
 
 function getContainer(): HTMLElement {
   return document.getElementById("viewer-root") as HTMLElement;
@@ -135,6 +149,7 @@ function renderGeometry(msg: GeometryMessage): void {
   }
 
   const group = new THREE.Group();
+  const meshesByIndex = new Map<number, THREE.Mesh>();
   const offsetCache = new Map<number, [number, number, number]>();
   let boundingRadius = 1;
 
@@ -154,8 +169,8 @@ function renderGeometry(msg: GeometryMessage): void {
 
     const isTarget = i === msg.targetSubmodelIndex;
     const material = new THREE.MeshStandardMaterial({
-      color: isTarget ? 0xffcc33 : 0x8899aa,
-      emissive: isTarget ? 0x664400 : 0x000000,
+      color: isTarget ? HIGHLIGHT_COLOR : NORMAL_COLOR,
+      emissive: isTarget ? HIGHLIGHT_EMISSIVE : 0x000000,
       metalness: 0.1,
       roughness: 0.85,
       side: THREE.DoubleSide,
@@ -163,13 +178,7 @@ function renderGeometry(msg: GeometryMessage): void {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(worldOffset[0], worldOffset[1], worldOffset[2]);
     group.add(mesh);
-
-    if (isTarget) {
-      const wireGeo = new THREE.WireframeGeometry(geometry);
-      const wireframe = new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color: 0xffffff }));
-      wireframe.position.copy(mesh.position);
-      group.add(wireframe);
-    }
+    meshesByIndex.set(i, mesh);
 
     for (let k = 0; k < sm.positions.length; k += 3) {
       const dist = Math.hypot(
@@ -185,6 +194,10 @@ function renderGeometry(msg: GeometryMessage): void {
 
   scene.add(group);
   currentGroup = group;
+  currentMeshes = meshesByIndex;
+  currentTargetIndex = -1;
+  currentWireframe = null;
+  applyHighlight(msg.targetSubmodelIndex);
 
   camera.position.set(boundingRadius * 1.5, boundingRadius * 1.2, boundingRadius * 1.5);
   camera.far = boundingRadius * 20;
@@ -193,10 +206,54 @@ function renderGeometry(msg: GeometryMessage): void {
   controls.update();
 }
 
+/**
+ * Recolors the previously-highlighted mesh back to normal and the newly-targeted one to
+ * the highlight color, moving the wireframe overlay to match - all in place, with no
+ * scene rebuild and no camera changes. This is what lets re-triggering F12 on a
+ * different `$Subsystem:` of the same, already-open model update in place instead of
+ * visibly "reloading" (which previously also reset the user's camera angle/zoom every
+ * time - see pofViewer.ts's fingerprint()-based dispatch).
+ */
+function applyHighlight(targetSubmodelIndex: number): void {
+  if (!scene || !currentGroup || !currentMeshes || targetSubmodelIndex === currentTargetIndex) {
+    return;
+  }
+
+  const previous = currentMeshes.get(currentTargetIndex);
+  if (previous) {
+    const mat = previous.material as THREE.MeshStandardMaterial;
+    mat.color.setHex(NORMAL_COLOR);
+    mat.emissive.setHex(0x000000);
+  }
+
+  if (currentWireframe) {
+    currentGroup.remove(currentWireframe);
+    currentWireframe.geometry.dispose();
+    (currentWireframe.material as THREE.Material).dispose();
+    currentWireframe = null;
+  }
+
+  const target = currentMeshes.get(targetSubmodelIndex);
+  if (target) {
+    const mat = target.material as THREE.MeshStandardMaterial;
+    mat.color.setHex(HIGHLIGHT_COLOR);
+    mat.emissive.setHex(HIGHLIGHT_EMISSIVE);
+
+    const wireGeo = new THREE.WireframeGeometry(target.geometry);
+    currentWireframe = new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color: 0xffffff }));
+    currentWireframe.position.copy(target.position);
+    currentGroup.add(currentWireframe);
+  }
+
+  currentTargetIndex = targetSubmodelIndex;
+}
+
 window.addEventListener("message", (event: MessageEvent) => {
-  const msg = event.data as GeometryMessage | undefined;
+  const msg = event.data as GeometryMessage | HighlightMessage | undefined;
   if (msg && msg.type === "geometry") {
     renderGeometry(msg);
+  } else if (msg && msg.type === "highlight") {
+    applyHighlight(msg.targetSubmodelIndex);
   }
 });
 

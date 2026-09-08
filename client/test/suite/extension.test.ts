@@ -971,6 +971,39 @@ suite("FSO Table Language Server", () => {
     assert.ok(opened, "expected a new 'POF: fighter01.pof' webview tab to open after F12 on $Subsystem: turret01");
   });
 
+  test("F12 on a different $Subsystem: of the same, already-open model reuses the panel instead of opening a second one", async () => {
+    // Regression coverage for the highlight-only update path (see pofViewer.ts's
+    // fingerprint()-based dispatch, added so re-triggering F12 on a different
+    // subsystem of the same model doesn't visibly "reload" the viewer - previously
+    // this reset the user's camera angle/zoom every time, even though the panel was
+    // already being reused). This test can't inspect the webview's internal three.js
+    // state (no such API), but it does confirm the client-side flow that decides
+    // between a highlight-only message and a full reload doesn't regress the existing
+    // "only one panel, ever" behavior or throw.
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const turretLine = lines.findIndex((l) => l.includes("$Subsystem: turret01"));
+    const engineLine = lines.findIndex((l) => l.includes("$Subsystem: engine01,"));
+    assert.ok(turretLine >= 0 && engineLine >= 0, "fixture must contain both a turret01 and engine01 $Subsystem: line");
+
+    const tabsBefore = countPofViewerTabs();
+    await vscode.commands.executeCommand("vscode.executeDefinitionProvider", uri, new vscode.Position(turretLine, 5));
+    await waitFor(() => countPofViewerTabs() > tabsBefore, 5000);
+    const tabsAfterFirst = countPofViewerTabs();
+
+    await vscode.commands.executeCommand("vscode.executeDefinitionProvider", uri, new vscode.Position(engineLine, 5));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.strictEqual(
+      countPofViewerTabs(),
+      tabsAfterFirst,
+      "expected the same POF viewer panel to be reused (no second tab) when F12'ing a different subsystem of the same model",
+    );
+  });
+
   test("F12 elsewhere in ships.tbl does not open the 3D viewer", async () => {
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);
