@@ -39,7 +39,13 @@ export function activate(context: ExtensionContext): void {
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "fso-table" }],
+    documentSelector: [
+      { scheme: "file", language: "fso-table" },
+      // .fs2/.fc2 missions get ship-class/weapon-name cross-referencing against
+      // ships.tbl/weapons.tbl (see server.ts's missionEntriesByUri) - not full mission
+      // parsing, so unlike fso-table this carries no diagnostics of its own.
+      { scheme: "file", language: "fso-mission" },
+    ],
     synchronize: {
       // Lets the server pull `fsoLsp.*` settings via workspace/configuration and be
       // notified (workspace/didChangeConfiguration) whenever the user changes one.

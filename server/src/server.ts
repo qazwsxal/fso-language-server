@@ -45,6 +45,7 @@ import {
   SourceLocation,
 } from "./tableAnalysis/mergedArmorTable";
 import { extractSpeciesEntries, SpeciesEntryInfo } from "./tableAnalysis/speciesEntries";
+import { extractMissionEntries, MissionEntryInfo } from "./tableAnalysis/missionEntries";
 import { buildEffectiveSpeciesTable, collectDisplaySpeciesNames, EffectiveSpeciesEntry } from "./tableAnalysis/mergedSpeciesTable";
 import { buildEffectiveAiClassTable, collectDisplayAiClassNames, EffectiveAiClassEntry } from "./tableAnalysis/mergedAiClassTable";
 import { buildEffectiveIffTable, collectDisplayIffNames, EffectiveIffEntry } from "./tableAnalysis/mergedIffTable";
@@ -111,6 +112,13 @@ const parsedByUri = new Map<string, ParseResult>();
 const shipEntriesByUri = new Map<string, ShipEntryInfo[]>();
 /** Per-document weapon-entry cache (model file only - weapons have no subsystem concept), keyed by URI. */
 const weaponEntriesByUri = new Map<string, WeaponEntryInfo[]>();
+/** Per-document mission-entry cache (.fs2/.fc2 ship-class/weapon-name cross-references), keyed by URI. */
+const missionEntriesByUri = new Map<string, MissionEntryInfo>();
+
+/** Matches a .fs2 mission or .fc2 campaign file - the two extensions the "fso-mission" client-side language covers. */
+function isMissionFile(uri: string): boolean {
+  return /\.(fs2|fc2)$/i.test(uri);
+}
 /** Per-document species-entry cache (currently just `$Default IFF:`), keyed by URI. */
 const speciesEntriesByUri = new Map<string, SpeciesEntryInfo[]>();
 
@@ -457,6 +465,62 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
     }
   }
 
+  const mission = missionEntriesByUri.get(documentUri);
+  if (mission) {
+    const shipClass = mission.shipClassRefs.find((r) => r.line === line);
+    if (shipClass) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveShipTable(searchDirs).get(shipClass.value.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    const missionToken = findMissionRefTokenAt(mission, documents.get(documentUri), line, params.position.character);
+    if (missionToken) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry =
+          missionToken.kind === "ship"
+            ? getEffectiveShipTable(searchDirs).get(missionToken.name.toLowerCase())
+            : getEffectiveWeaponsTable(searchDirs).get(missionToken.name.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Finds the ship-class-or-weapon name token (if any) at `line`/`character` within a
+ * mission's `$Ship Choices:`/`+Weaponry Pool:`/`+Primary Banks:`/`+Secondary Banks:`
+ * lists - reuses findBankNameTokenAt() since these are the exact same
+ * `( "Name" ... )`-shaped lists ships.tbl's own bank fields use, just spread across
+ * (frequently many) physical lines rather than always sitting on the field's own line -
+ * see MissionNameRef's doc comment for why each ref already carries its own real line.
+ */
+function findMissionRefTokenAt(
+  mission: MissionEntryInfo,
+  doc: TextDocument | undefined,
+  line: number,
+  character: number,
+): { kind: "ship" | "weapon"; name: string } | null {
+  if (!doc) {
+    return null;
+  }
+  if (mission.shipChoiceRefs.some((r) => r.line === line)) {
+    const token = findBankNameTokenAt(doc, line, character);
+    return token?.name ? { kind: "ship", name: token.name } : null;
+  }
+  if (mission.weaponBankRefs.some((r) => r.line === line) || mission.weaponryPoolRefs.some((r) => r.line === line)) {
+    const token = findBankNameTokenAt(doc, line, character);
+    return token?.name ? { kind: "weapon", name: token.name } : null;
+  }
   return null;
 }
 
@@ -472,6 +536,7 @@ documents.onDidClose((e) => {
   shipEntriesByUri.delete(e.document.uri);
   weaponEntriesByUri.delete(e.document.uri);
   speciesEntriesByUri.delete(e.document.uri);
+  missionEntriesByUri.delete(e.document.uri);
   connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
 });
 
@@ -507,10 +572,12 @@ connection.onDidChangeWatchedFiles(() => {
 
 function validateAndPublish(document: TextDocument): void {
   const result = parseTable(document.getText());
+  const isMission = isMissionFile(document.uri);
   parsedByUri.set(document.uri, result);
   shipEntriesByUri.set(document.uri, extractShipEntries(result.sections));
   weaponEntriesByUri.set(document.uri, extractWeaponEntries(result.sections));
   speciesEntriesByUri.set(document.uri, extractSpeciesEntries(result.sections));
+  missionEntriesByUri.set(document.uri, extractMissionEntries(result.sections));
 
   const schema = findSchemaForFile(document.uri);
   const schemaDiagnostics = schema ? validateAgainstSchema(result.sections, schema, unknownFieldSeverity) : [];
@@ -531,7 +598,15 @@ function validateAndPublish(document: TextDocument): void {
   const soundDiagnostics = computeSoundDiagnostics(document.uri, ships, weapons);
 
   const diagnostics: LspDiagnostic[] = [
-    ...result.diagnostics,
+    // parseTable()'s own structural diagnostics ("Unrecognized line", "not closed with
+    // #End", ...) assume .tbl/.tbm grammar - a real .fs2's SEXP-based #Events/#Goals and
+    // multi-line vector/matrix continuations (neither of which this parser attempts to
+    // understand) trip "Unrecognized line" on well over 100 perfectly valid lines in a
+    // typical mission (confirmed against a real thrash_test.fs2), and most sections
+    // don't close with a literal #End the way every table does. This parser is only used
+    // for mission files to grab the #Objects/#Players cross-references below, not to
+    // validate mission structure, so none of its own diagnostics apply there.
+    ...(isMission ? [] : result.diagnostics),
     ...schemaDiagnostics,
     ...bankCountDiagnostics,
     ...bankWeaponNameDiagnostics,
@@ -2338,6 +2413,49 @@ connection.onHover((params): Hover | null => {
         value: `**$Subsystem: ${subsystem.name}** ⚠️\n\nNo matching submodel name found in \`${ship.modelFile}\`.\n\nAvailable names: ${knownNames.length ? knownNames.map((n) => `\`${n}\``).join(", ") : "(none decoded)"}`,
       },
     };
+  }
+
+  const mission = missionEntriesByUri.get(params.textDocument.uri);
+  if (mission) {
+    const shipClass = mission.shipClassRefs.find((r) => r.line === params.position.line);
+    if (shipClass) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry = getEffectiveShipTable(searchDirs).get(shipClass.value.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**$Class: ${shipClass.value}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**$Class: ${shipClass.value}** ⚠️\n\nNot found in ships.tbl along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    const missionToken = findMissionRefTokenAt(mission, hoverDoc, params.position.line, params.position.character);
+    if (missionToken) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry =
+          missionToken.kind === "ship"
+            ? getEffectiveShipTable(searchDirs).get(missionToken.name.toLowerCase())
+            : getEffectiveWeaponsTable(searchDirs).get(missionToken.name.toLowerCase());
+        const tableName = missionToken.kind === "ship" ? "ships.tbl" : "weapons.tbl";
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**${missionToken.name}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**${missionToken.name}** ⚠️\n\nNot found in ${tableName} along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
   }
 
   const result = parsedByUri.get(params.textDocument.uri);

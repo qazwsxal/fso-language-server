@@ -1190,6 +1190,99 @@ suite("FSO Table Language Server", () => {
   });
 });
 
+suite("Mission (.fs2) cross-linking", () => {
+  test("does not flag any diagnostics for a real-shaped .fs2 (SEXP/#Events content is not fso-table grammar)", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/missions/test_mission.fs2"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    assert.equal(doc.languageId, "fso-mission");
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const diagnostics = vscode.languages.getDiagnostics(uri);
+    assert.deepEqual(diagnostics, [], `expected no diagnostics for a mission file, got: ${JSON.stringify(diagnostics.map((d) => d.message))}`);
+  });
+
+  test("hovers a $Class: line and shows found/not-found status against ships.tbl", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/missions/test_mission.fs2"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const classLine = lines.findIndex((l) => l.includes("$Class: GTF Ulysses"));
+    assert.ok(classLine >= 0);
+
+    const hoverText = await getHoverText(uri, classLine);
+    assert.ok(hoverText.includes("$Class: GTF Ulysses") && hoverText.includes("✓"), `expected a found $Class: hover, got: ${hoverText}`);
+  });
+
+  test("hovers a name inside $Ship Choices:/+Weaponry Pool: and shows found/not-found status, per name not per line", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/missions/test_mission.fs2"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+
+    const foundShipLine = lines.findIndex((l) => l.includes('"GTF Ulysses"'));
+    const foundShipChar = lines[foundShipLine].indexOf("GTF Ulysses") + 2;
+    const foundShipHovers = (await vscode.commands.executeCommand(
+      "vscode.executeHoverProvider",
+      uri,
+      new vscode.Position(foundShipLine, foundShipChar),
+    )) as vscode.Hover[];
+    const foundShipText = foundShipHovers.map((h) => h.contents.map((c) => (typeof c === "string" ? c : (c as vscode.MarkdownString).value)).join("\n")).join("\n");
+    assert.ok(foundShipText.includes("GTF Ulysses") && foundShipText.includes("✓"), `expected a found hover, got: ${foundShipText}`);
+
+    const missingShipLine = lines.findIndex((l) => l.includes('"Nonexistent Ship Class"'));
+    const missingShipChar = lines[missingShipLine].indexOf("Nonexistent") + 2;
+    const missingShipHovers = (await vscode.commands.executeCommand(
+      "vscode.executeHoverProvider",
+      uri,
+      new vscode.Position(missingShipLine, missingShipChar),
+    )) as vscode.Hover[];
+    const missingShipText = missingShipHovers.map((h) => h.contents.map((c) => (typeof c === "string" ? c : (c as vscode.MarkdownString).value)).join("\n")).join("\n");
+    assert.ok(
+      missingShipText.includes("⚠️") && missingShipText.includes("Not found in ships.tbl"),
+      `expected a not-found hover, got: ${missingShipText}`,
+    );
+
+    const weaponLine = lines.findIndex((l) => l.includes('"Subach HL-7"') && l.includes("17"));
+    const weaponChar = lines[weaponLine].indexOf("Subach") + 2;
+    const weaponHovers = (await vscode.commands.executeCommand(
+      "vscode.executeHoverProvider",
+      uri,
+      new vscode.Position(weaponLine, weaponChar),
+    )) as vscode.Hover[];
+    const weaponText = weaponHovers.map((h) => h.contents.map((c) => (typeof c === "string" ? c : (c as vscode.MarkdownString).value)).join("\n")).join("\n");
+    assert.ok(weaponText.includes("Subach HL-7") && weaponText.includes("✓"), `expected a found weapon hover, got: ${weaponText}`);
+  });
+
+  test("go-to-definition on a $Class: value and a +Primary Banks: weapon name jumps to ships.tbl/weapons.tbl", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/missions/test_mission.fs2"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const classLine = lines.findIndex((l) => l.includes("$Class: GTF Ulysses"));
+    const classDefs = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(classLine, 10),
+    )) as vscode.Location[];
+    assert.ok(classDefs && classDefs.length > 0, "expected a go-to-definition result for $Class:");
+    assert.ok(classDefs[0].uri.fsPath.endsWith("ships.tbl"), `expected the target to be ships.tbl, got: ${classDefs[0].uri.fsPath}`);
+
+    const bankLine = lines.findIndex((l) => l.includes("+Primary Banks:"));
+    const bankChar = lines[bankLine].indexOf("Subach") + 2;
+    const bankDefs = (await vscode.commands.executeCommand(
+      "vscode.executeDefinitionProvider",
+      uri,
+      new vscode.Position(bankLine, bankChar),
+    )) as vscode.Location[];
+    assert.ok(bankDefs && bankDefs.length > 0, "expected a go-to-definition result for +Primary Banks: weapon name");
+    assert.ok(bankDefs[0].uri.fsPath.endsWith("weapons.tbl"), `expected the target to be weapons.tbl, got: ${bankDefs[0].uri.fsPath}`);
+  });
+});
+
 /** Counts open editor tabs whose label matches the 3D POF viewer webview panel's title ("POF: <filename>"). */
 function countPofViewerTabs(): number {
   let count = 0;

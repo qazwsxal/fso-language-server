@@ -1,0 +1,73 @@
+#Mission Info
+
+$Version: 23.1
+$Name: XSTR("Test Mission", -1)
+$Author: fso-lsp tests
+$Created: 1/1/24 at 00:00:00
+$Notes:
+Fixture mission for cross-linking tests.
+$End Notes:
+
+$Mission Desc:
+XSTR("Fixture mission.
+", -1)
+$end_multi_text
++Game Type Flags: 1
++Flags: 3072
+
+$AI Profile: FS2 RETAIL
+
+#Players		;! 1 total
+
+$Starting Shipname: Alpha 1
+$Ship Choices: (
+	"GTF Ulysses"	5
+	"Nonexistent Ship Class"	5
+)
+
++Weaponry Pool: (
+	"Subach HL-7"	17
+	"Nonexistent Weapon"	16
+)
+
+#Objects		;! 1 total
+
+$Name: Alpha 1		;! Object #0
+$Class: GTF Ulysses
+$Team: Friendly
+$Location: 0.000000, 0.000000, 0.000000
+$Orientation:
+	1.000000, 0.000000, 0.000000,
+	0.000000, 1.000000, 0.000000,
+	0.000000, 0.000000, 1.000000
++Initial Hull: 100
+$Arrival Location: Hyperspace
+$Arrival Cue: ( false )
+$Departure Location: Hyperspace
+$Departure Cue: ( false )
+$Determination: 10
++Primary Banks: ( "Subach HL-7" )
++Secondary Banks: ( "Tempest" )
+
+#Wings		;! 0 total
+
+#Events
+
+#Goals
+
+#Waypoints
+
+#Messages
+
+#Reinforcements
+
+#Background bitmaps
+
+#Asteroid Fields
+
+#Music
+
+$Event Music: None
+$Substitute Event Music flags:
+
+#End
