@@ -243,6 +243,30 @@ suite("FSO Table Language Server", () => {
     assert.ok(hoverText.includes("subobject"), `expected a POF summary, got: ${hoverText}`);
   });
 
+  test("treats $Model File: none as FSO's real VALID_FNAME 'no model set' sentinel, not a missing file", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/weapons.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+
+    const diagnostics = await waitForDiagnostics(uri);
+    const messages = diagnostics.map((d) => d.message);
+    assert.ok(
+      !diagnostics.some((d) => /"none".*could not be resolved/i.test(d.message)),
+      `did not expect a could-not-be-resolved diagnostic for the literal "none" sentinel, got: ${JSON.stringify(messages)}`,
+    );
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const subachNameLine = lines.findIndex((l) => l.includes("$Name: Subach HL-7"));
+    assert.ok(subachNameLine >= 0, "fixture must contain a Subach HL-7 weapon entry");
+
+    const hoverText = await getHoverText(uri, subachNameLine);
+    assert.ok(
+      hoverText.includes("none - primaries/lasers typically have no model"),
+      `expected the clean "no model" status, not a not-found warning, got: ${hoverText}`,
+    );
+    assert.ok(!hoverText.includes("⚠️ not found"), `did not expect a not-found warning for the "none" sentinel, got: ${hoverText}`);
+  });
+
   test("flags a ship $Armor Type: that doesn't exist in armor.tbl", async () => {
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);

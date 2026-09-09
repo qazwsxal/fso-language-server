@@ -214,14 +214,28 @@ function findRefAtLine(refs: (ShipTextureRef | WeaponTextureRef)[], line: number
 }
 
 /**
+ * True for a filename-valued field's value that FSO's own `VALID_FNAME()` (pstypes.h)
+ * treats as "no file set": empty, `none`, or `<none>` (all case-insensitive) - confirmed
+ * against a real bp-wep.tbm using `$Model file: none` (VALID_FNAME literally checks
+ * `stricmp(x, "none") != 0 && stricmp(x, "<none>") != 0`, on top of the empty-string
+ * check). Filename fields across ships.tbl/weapons.tbl (POF/model files, textures,
+ * sounds) all funnel through the same VALID_FNAME() gate in the real parser, so this one
+ * helper covers all of them rather than each field needing its own sentinel list.
+ */
+function isUnsetFileValue(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  return v === "" || v === "none" || v === "<none>";
+}
+
+/**
  * Resolves a sound-referencing field's value to its sounds.tbl `$Name:` definition
  * site(s), mirroring findSoundHover()'s lookup (always the merged table's `"game"` kind -
  * see [[fso-gamesnd-lookup]] project memory) but returning LSP Locations instead of a
- * hover string. `<none>`/empty/`-1` are the same "no sound set" sentinels
+ * hover string. `<none>`/`none`/empty/`-1` are the same "no sound set" sentinels
  * computeSoundDiagnostics() skips - nothing to jump to for those.
  */
 function resolveSoundDefinition(documentUri: string, value: string): Location[] | null {
-  if (value.toLowerCase() === "<none>" || value === "" || value === "-1") {
+  if (isUnsetFileValue(value) || value === "-1") {
     return null;
   }
   try {
@@ -244,7 +258,7 @@ function resolveSoundDefinition(documentUri: string, value: string): Location[] 
  * as navigation for those can safely go until a binary-aware content provider exists.
  */
 function resolveTextureDefinition(documentUri: string, value: string): Location[] | null {
-  if (value.toLowerCase() === "<none>" || value === "") {
+  if (isUnsetFileValue(value)) {
     return null;
   }
   try {
@@ -576,7 +590,7 @@ function resolvePofForShipEntry(documentUri: string, ship: ShipEntryInfo): PofMo
     const searchDirs = buildSearchPath(filePath);
     const effective = getEffectiveShipTable(searchDirs).get(ship.name.toLowerCase());
     const modelFile = effective?.modelFile ?? ship.modelFile;
-    if (!modelFile) {
+    if (!modelFile || isUnsetFileValue(modelFile)) {
       return null;
     }
     const resolved = resolveModelFile(searchDirs, modelFile);
@@ -596,7 +610,7 @@ function resolvePofLocationForShipEntry(documentUri: string, ship: ShipEntryInfo
     const searchDirs = buildSearchPath(filePath);
     const effective = getEffectiveShipTable(searchDirs).get(ship.name.toLowerCase());
     const modelFile = effective?.modelFile ?? ship.modelFile;
-    if (!modelFile) {
+    if (!modelFile || isUnsetFileValue(modelFile)) {
       return null;
     }
     return resolveModelFile(searchDirs, modelFile);
@@ -634,7 +648,7 @@ function resolvePofForWeaponEntry(documentUri: string, weapon: WeaponEntryInfo):
     const searchDirs = buildSearchPath(filePath);
     const effective = getEffectiveWeaponsTable(searchDirs).get(weapon.name.toLowerCase());
     const modelFile = effective?.modelFile ?? weapon.modelFile;
-    if (!modelFile) {
+    if (!modelFile || isUnsetFileValue(modelFile)) {
       return null;
     }
     const resolved = resolveModelFile(searchDirs, modelFile);
@@ -657,7 +671,7 @@ function computeWeaponModelDiagnostics(documentUri: string, weapons: WeaponEntry
   const diagnostics: ParseDiagnostic[] = [];
 
   for (const weapon of weapons) {
-    if (!weapon.modelFile || weapon.modelFileLine === null) {
+    if (!weapon.modelFile || weapon.modelFileLine === null || isUnsetFileValue(weapon.modelFile)) {
       continue;
     }
     const pof = resolvePofForWeaponEntry(documentUri, weapon);
@@ -1206,7 +1220,7 @@ function computeTextureDiagnostics(
   const diagnostics: ParseDiagnostic[] = [];
 
   for (const ref of allRefs) {
-    if (ref.value.toLowerCase() === "<none>" || ref.value === "") {
+    if (isUnsetFileValue(ref.value)) {
       continue;
     }
     try {
@@ -1250,7 +1264,7 @@ function computeSoundDiagnostics(documentUri: string, ships: ShipEntryInfo[], we
   const diagnostics: ParseDiagnostic[] = [];
 
   for (const ref of allRefs) {
-    if (ref.value.toLowerCase() === "<none>" || ref.value === "" || ref.value === "-1") {
+    if (isUnsetFileValue(ref.value) || ref.value === "-1") {
       continue;
     }
     try {
@@ -2004,8 +2018,9 @@ connection.onHover((params): Hover | null => {
         const layers = effective.layerSources
           .map((s, i) => `${i + 1}. \`${stripSharedSourcePrefix(s, sharedPrefix)}\``)
           .join("\n");
-        const pof = effective.modelFile ? resolvePofForWeaponEntry(params.textDocument.uri, weaponAtLine) : null;
-        const modelStatus = !effective.modelFile
+        const hasModelFile = effective.modelFile && !isUnsetFileValue(effective.modelFile);
+        const pof = hasModelFile ? resolvePofForWeaponEntry(params.textDocument.uri, weaponAtLine) : null;
+        const modelStatus = !hasModelFile
           ? "(none - primaries/lasers typically have no model)"
           : pof
             ? `\`${effective.modelFile}\` ✓ (${formatPofSummary(pof)})`
@@ -2105,14 +2120,15 @@ connection.onHover((params): Hover | null => {
         const layers = effective.layerSources
           .map((s, i) => `${i + 1}. \`${stripSharedSourcePrefix(s, sharedPrefix)}\``)
           .join("\n");
-        const pof = effective.modelFile ? resolvePofForShipEntry(params.textDocument.uri, shipAtNameLine) : null;
+        const hasModelFile = effective.modelFile && !isUnsetFileValue(effective.modelFile);
+        const pof = hasModelFile ? resolvePofForShipEntry(params.textDocument.uri, shipAtNameLine) : null;
         const fieldTable = renderEffectiveShipFieldTable(effective, sharedPrefix);
         return {
           contents: {
             kind: "markdown",
             value:
               `**$Name: ${effective.name}** (effective, across the active mod's search path)\n\n` +
-              `POF file: \`${effective.modelFile ?? "(none)"}\`${effective.modelFileSource ? ` — from \`${stripSharedSourcePrefix(effective.modelFileSource, sharedPrefix)}\`` : ""}\n\n` +
+              `POF file: \`${hasModelFile ? effective.modelFile : "(none)"}\`${effective.modelFileSource ? ` — from \`${stripSharedSourcePrefix(effective.modelFileSource, sharedPrefix)}\`` : ""}\n\n` +
               `Subsystems: ${effective.subsystems.length}${effective.subsystemsSource ? ` — from \`${stripSharedSourcePrefix(effective.subsystemsSource, sharedPrefix)}\`` : ""}\n\n` +
               `Armor Type: ${effective.armorType ?? "(none)"}${effective.armorTypeSource ? ` — from \`${stripSharedSourcePrefix(effective.armorTypeSource, sharedPrefix)}\`` : ""}\n\n` +
               `${formatBankLine("Primary", effective.defaultPrimaryBanks, effective.defaultPrimaryBanksSource, pof?.primaryBankCount ?? null, sharedPrefix)}\n\n` +
