@@ -27,11 +27,28 @@
           ".tbm"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "fso-mission",
+        "aliases": [
+          "FSO Mission",
+          "fso-mission"
+        ],
+        "extensions": [
+          ".fs2",
+          ".fc2"
+        ],
+        "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
         "language": "fso-table",
+        "scopeName": "source.fso-table",
+        "path": "./syntaxes/fso-table.tmLanguage.json"
+      },
+      {
+        "language": "fso-mission",
         "scopeName": "source.fso-table",
         "path": "./syntaxes/fso-table.tmLanguage.json"
       }

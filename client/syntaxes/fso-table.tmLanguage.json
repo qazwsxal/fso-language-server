@@ -1,26 +1,68 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "FSO Table",
+  "comment": "Thanks to MjnMixael (author of FSO-Table-Syntax-Extension, https://github.com/MjnMixael/FSO-Table-Syntax-Extension) for prior art that informed the extended grammar coverage here (comment styles, sentinels, XSTR handling). This grammar also backs the fso-mission (.fs2/.fc2) language for the same reason.",
   "scopeName": "source.fso-table",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#version-tag" },
+    { "include": "#sentinels" },
+    { "include": "#end-markers" },
     { "include": "#sections" },
-    { "include": "#fields" },
     { "include": "#xstr" },
+    { "include": "#fields" },
+    { "include": "#demo-marker" },
     { "include": "#strings" },
     { "include": "#numbers" }
   ],
   "repository": {
     "comments": {
-      "name": "comment.line.semicolon.fso-table",
-      "match": ";.*$"
+      "patterns": [
+        { "name": "comment.line.semicolon.fso-table", "match": ";.*$" },
+        { "name": "comment.block.fso-table", "begin": "/\\*", "end": "\\*/" },
+        { "name": "comment.block.alt.fso-table", "begin": "!\\*", "end": "\\*!" }
+      ]
+    },
+    "version-tag": {
+      "name": "comment.line.version-tag.fso-table",
+      "match": ";;FSO\\s+[^;]*;;"
+    },
+    "sentinels": {
+      "patterns": [
+        {
+          "name": "keyword.other.sentinel.fso-table",
+          "match": "\\+(nocreate|remove)\\b"
+        },
+        {
+          "name": "constant.language.none.fso-table",
+          "match": "(?<![\\w.])-1(?![\\w.])"
+        },
+        {
+          "name": "keyword.control.multitext-end.fso-table",
+          "match": "^\\s*\\$end_multi_text\\b"
+        },
+        {
+          "name": "keyword.control.custom-strings-end.fso-table",
+          "match": "^\\s*\\$end_custom_strings\\b"
+        }
+      ]
     },
     "sections": {
-      "match": "^\\s*(#End)\\b|^\\s*(#[^\\n]+)",
+      "match": "^\\s*(#[^\\n]+)",
       "captures": {
-        "1": { "name": "keyword.control.end.fso-table" },
-        "2": { "name": "keyword.control.section.fso-table" }
+        "1": { "name": "keyword.control.section.fso-table" }
       }
+    },
+    "end-markers": {
+      "match": "^\\s*(#End|#end)\\b",
+      "captures": {
+        "1": { "name": "keyword.control.end.fso-table" }
+      }
+    },
+    "demo-marker": {
+      "comment": "A literal @ at the very start of a $Name: value (stripped by backspace() in ship.cpp; historically marked demo-only ships). Matched by lookbehind so it doesn't swallow $Name:'s own field scope.",
+      "match": "(?<=\\$Name:\\s*)@",
+      "name": "keyword.other.demo-marker.fso-table"
     },
     "fields": {
       "match": "^\\s*(\\$[^:\\n]+|\\+[^:\\n]+|@[^:\\n]+)(:)?",
@@ -30,13 +72,21 @@
       }
     },
     "xstr": {
-      "match": "\\bXSTR\\s*\\(",
-      "name": "support.function.xstr.fso-table"
+      "name": "support.function.xstr.fso-table",
+      "begin": "\\bXSTR\\s*\\(",
+      "end": "\\)",
+      "patterns": [
+        { "include": "#strings" },
+        { "include": "#numbers" }
+      ]
     },
     "strings": {
       "name": "string.quoted.double.fso-table",
       "begin": "\"",
-      "end": "\""
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.fso-table", "match": "\\\\." }
+      ]
     },
     "numbers": {
       "match": "(?<![\\w.])-?\\d+(\\.\\d+)?(?![\\w.])",
