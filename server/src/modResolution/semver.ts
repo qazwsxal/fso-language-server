@@ -64,7 +64,17 @@ export function satisfiesConstraint(version: string, constraint: string | undefi
   return compareVersions(version, trimmed) === 0;
 }
 
-/** Picks the highest version among candidates that satisfies the constraint, falling back to the highest overall if none do. */
+/**
+ * Picks the highest installed version satisfying `constraint`, mirroring Knossos.NET's
+ * `ModDependency.SelectMod()` (see Models/ModDependency.cs): "the best installed mod
+ * that meets this dependency by semantic version, null if none". A real constraint
+ * (e.g. "~4.6.8") that nothing installed satisfies returns null rather than silently
+ * substituting some other installed version - confirmed against Knossos's own source,
+ * which has no such fallback (a genuinely unsatisfied dependency is a missing
+ * dependency, not "use whatever's newest"). An absent/empty constraint is different: it
+ * means "any version will do" (Knossos: "the mod will use the newest installed version
+ * available"), so that case alone still picks the highest of everything.
+ */
 export function pickBestVersion<T>(
   candidates: T[],
   getVersion: (c: T) => string,
@@ -73,7 +83,12 @@ export function pickBestVersion<T>(
   if (candidates.length === 0) {
     return null;
   }
+  if (!constraint || constraint.trim().length === 0) {
+    return candidates.reduce((best, c) => (compareVersions(getVersion(c), getVersion(best)) > 0 ? c : best));
+  }
   const satisfying = candidates.filter((c) => satisfiesConstraint(getVersion(c), constraint));
-  const pool = satisfying.length > 0 ? satisfying : candidates;
-  return pool.reduce((best, c) => (compareVersions(getVersion(c), getVersion(best)) > 0 ? c : best));
+  if (satisfying.length === 0) {
+    return null;
+  }
+  return satisfying.reduce((best, c) => (compareVersions(getVersion(c), getVersion(best)) > 0 ? c : best));
 }

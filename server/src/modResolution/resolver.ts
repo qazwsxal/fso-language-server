@@ -73,10 +73,11 @@ export function findModRoot(startPath: string): string | null {
 /**
  * Finds the installed folder for a Knossos mod id under `libraryRoot` (the directory
  * containing every versioned mod folder, e.g. `.../FS2/`), picking among any
- * `<id>-<version>` sibling folders via pickBestVersion() against `versionConstraint`
- * (or the highest installed version if there's no constraint to check, e.g. when the
- * id came from mod.json's already-resolved `mod_flag` list rather than a raw
- * dependency's version range).
+ * `<id>-<version>` sibling folders via pickBestVersion() against `versionConstraint` -
+ * see that function's doc comment for exactly how an unsatisfied constraint is handled
+ * (returns null, mirroring Knossos.NET's own dependency resolution, rather than
+ * silently substituting some other installed version). No constraint at all means "any
+ * version will do" and picks the highest installed, same as Knossos.
  */
 function resolveModIdToFolder(libraryRoot: string, id: string, versionConstraint?: string): string | null {
   let entries: string[];
@@ -141,11 +142,19 @@ function buildSearchPathFromModJson(modRootDir: string): string[] | null {
   };
 
   if (modJson.mod_flag && modJson.mod_flag.length > 0) {
+    // mod_flag is just a bare, unversioned id list - it says "MVPS belongs on the
+    // search path" but not "which installed MVPS-* version". The real version
+    // constraint (e.g. "~4.6.8") only lives in packages[].dependencies[], so it has to
+    // be cross-referenced here too, or resolveModIdToFolder() falls back to "highest
+    // installed version" and can silently pick a newer-than-intended dependency (e.g.
+    // MVPS-5.0.2 when the mod actually targets ~4.6.8) - confirmed against a real
+    // Blue Planet Complete 3.3.3 install with multiple MVPS-* versions on disk.
+    const constraintById = new Map(collectPackageDependencyIds(modJson).map((dep) => [dep.id, dep.version]));
     for (const id of modJson.mod_flag) {
       if (id === "FSO") {
         continue;
       }
-      const dir = id === modJson.id ? modRootDir : resolveModIdToFolder(libraryRoot, id);
+      const dir = id === modJson.id ? modRootDir : resolveModIdToFolder(libraryRoot, id, constraintById.get(id));
       if (dir) {
         push(dir);
       }
