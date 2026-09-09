@@ -82,6 +82,11 @@
           "enum": ["off", "warning", "error"],
           "default": "off",
           "description": "How to report a $Field:/+Field: this extension doesn't recognize for the table it appears in. A field known to belong to a DIFFERENT table (e.g. a weapons.tbl field pasted into ships.tbl) is always reported as a warning regardless of this setting - this only controls fields unrecognized by every schema this extension knows about, which may simply be real, newer FSO fields it hasn't been taught about yet."
+        },
+        "fsoLsp.trimSharedSourcePrefix": {
+          "type": "boolean",
+          "default": true,
+          "description": "In the effective-definition hover's 'Layers applied' list and field table, strip the longest path prefix shared by every source shown (e.g. a common 'E:\\Games\\Knossos\\FS2\\' folder) so it isn't repeated on every line."
         }
       }
     }

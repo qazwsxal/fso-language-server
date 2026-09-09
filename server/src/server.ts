@@ -30,7 +30,12 @@ import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef
 import { buildEffectiveShipTable, EffectiveShipEntry } from "./tableAnalysis/mergedShipTable";
 import { extractWeaponEntries, WeaponEntryInfo, WeaponTextureRef } from "./tableAnalysis/weaponEntries";
 import { buildEffectiveWeaponsTable, collectDisplayWeaponNames, EffectiveWeaponEntry } from "./tableAnalysis/mergedWeaponsTable";
-import { renderEffectiveShipEntry, renderEffectiveWeaponEntry } from "./tableAnalysis/effectiveEntryFormatter";
+import {
+  renderEffectiveShipFieldTable,
+  renderEffectiveWeaponFieldTable,
+  computeSharedSourcePrefix,
+  stripSharedSourcePrefix,
+} from "./tableAnalysis/effectiveEntryFormatter";
 import {
   buildEffectiveArmorTable,
   collectAllDamageTypes,
@@ -110,11 +115,12 @@ const weaponEntriesByUri = new Map<string, WeaponEntryInfo[]>();
 const speciesEntriesByUri = new Map<string, SpeciesEntryInfo[]>();
 
 /**
- * Cached `fsoLsp.unknownFieldSeverity` setting - re-fetched (see refreshConfiguration()
- * below) whenever the client reports a configuration change, rather than pulled fresh on
- * every validation pass, so that hot path stays synchronous.
+ * Cached `fsoLsp.*` settings - re-fetched (see refreshConfiguration() below) whenever the
+ * client reports a configuration change, rather than pulled fresh on every validation/
+ * hover pass, so those hot paths stay synchronous.
  */
 let unknownFieldSeverity: UnknownFieldSeverity = "off";
+let trimSharedSourcePrefix = true;
 let hasConfigurationCapability = false;
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
@@ -131,16 +137,19 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   };
 });
 
-/** Pulls the current `fsoLsp.unknownFieldSeverity` setting from the client, if it supports configuration requests at all. */
+/** Pulls the current `fsoLsp.*` settings from the client, if it supports configuration requests at all. */
 async function refreshConfiguration(): Promise<void> {
   if (!hasConfigurationCapability) {
     return;
   }
   try {
-    const value = await connection.workspace.getConfiguration({ section: "fsoLsp.unknownFieldSeverity" });
-    unknownFieldSeverity = value === "warning" || value === "error" ? value : "off";
+    const config = await connection.workspace.getConfiguration({ section: "fsoLsp" });
+    const severity = config?.unknownFieldSeverity;
+    unknownFieldSeverity = severity === "warning" || severity === "error" ? severity : "off";
+    trimSharedSourcePrefix = config?.trimSharedSourcePrefix !== false;
   } catch {
     unknownFieldSeverity = "off";
+    trimSharedSourcePrefix = true;
   }
 }
 
@@ -1792,13 +1801,14 @@ function formatBankLine(
   bankList: { weaponNames: string[] } | null,
   source: string | null,
   actualCount: number | null,
+  sharedPrefix = "",
 ): string {
   if (!bankList) {
     return `${label} banks: (not set)`;
   }
   const declared = bankList.weaponNames.length;
   const status = actualCount === null ? "" : declared === actualCount ? " ✓" : ` ⚠️ (model has ${actualCount})`;
-  return `${label} banks: ${declared}${status}${source ? ` — from \`${source}\`` : ""}`;
+  return `${label} banks: ${declared}${status}${source ? ` — from \`${stripSharedSourcePrefix(source, sharedPrefix)}\`` : ""}`;
 }
 
 function formatPofSummary(pof: PofModel): string {
@@ -1990,20 +2000,26 @@ connection.onHover((params): Hover | null => {
       const searchDirs = buildSearchPath(filePath);
       const effective = getEffectiveWeaponsTable(searchDirs).get(weaponAtLine.name.toLowerCase());
       if (effective) {
-        const layers = effective.layerSources.map((s, i) => `${i + 1}. \`${s}\``).join("\n");
+        const sharedPrefix = trimSharedSourcePrefix ? computeSharedSourcePrefix(effective.layerSources) : "";
+        const layers = effective.layerSources
+          .map((s, i) => `${i + 1}. \`${stripSharedSourcePrefix(s, sharedPrefix)}\``)
+          .join("\n");
         const pof = effective.modelFile ? resolvePofForWeaponEntry(params.textDocument.uri, weaponAtLine) : null;
         const modelStatus = !effective.modelFile
           ? "(none - primaries/lasers typically have no model)"
           : pof
             ? `\`${effective.modelFile}\` ✓ (${formatPofSummary(pof)})`
             : `\`${effective.modelFile}\` ⚠️ not found along the active mod's search path`;
+        const fieldTable = renderEffectiveWeaponFieldTable(effective, sharedPrefix);
         return {
           contents: {
             kind: "markdown",
             value:
               `**$Name: ${effective.name}** (effective, across the active mod's search path)\n\n` +
-              `Model File: ${modelStatus}${effective.modelFileSource ? `\n\nFrom: \`${effective.modelFileSource}\`` : ""}\n\n` +
-              `Layers applied (base first, later wins):\n${layers}`,
+              `Model File: ${modelStatus}${effective.modelFileSource ? `\n\nFrom: \`${stripSharedSourcePrefix(effective.modelFileSource, sharedPrefix)}\`` : ""}\n\n` +
+              (sharedPrefix ? `Common path: \`${sharedPrefix}\`\n\n` : "") +
+              `Layers applied (base first, later wins):\n${layers}` +
+              (fieldTable ? `\n\n---\n\n${fieldTable}` : ""),
           },
         };
       }
@@ -2085,19 +2101,25 @@ connection.onHover((params): Hover | null => {
       const searchDirs = buildSearchPath(filePath);
       const effective = getEffectiveShipTable(searchDirs).get(shipAtNameLine.name.toLowerCase());
       if (effective) {
-        const layers = effective.layerSources.map((s, i) => `${i + 1}. \`${s}\``).join("\n");
+        const sharedPrefix = trimSharedSourcePrefix ? computeSharedSourcePrefix(effective.layerSources) : "";
+        const layers = effective.layerSources
+          .map((s, i) => `${i + 1}. \`${stripSharedSourcePrefix(s, sharedPrefix)}\``)
+          .join("\n");
         const pof = effective.modelFile ? resolvePofForShipEntry(params.textDocument.uri, shipAtNameLine) : null;
+        const fieldTable = renderEffectiveShipFieldTable(effective, sharedPrefix);
         return {
           contents: {
             kind: "markdown",
             value:
               `**$Name: ${effective.name}** (effective, across the active mod's search path)\n\n` +
-              `POF file: \`${effective.modelFile ?? "(none)"}\`${effective.modelFileSource ? ` — from \`${effective.modelFileSource}\`` : ""}\n\n` +
-              `Subsystems: ${effective.subsystems.length}${effective.subsystemsSource ? ` — from \`${effective.subsystemsSource}\`` : ""}\n\n` +
-              `Armor Type: ${effective.armorType ?? "(none)"}${effective.armorTypeSource ? ` — from \`${effective.armorTypeSource}\`` : ""}\n\n` +
-              `${formatBankLine("Primary", effective.defaultPrimaryBanks, effective.defaultPrimaryBanksSource, pof?.primaryBankCount ?? null)}\n\n` +
-              `${formatBankLine("Secondary", effective.defaultSecondaryBanks, effective.defaultSecondaryBanksSource, pof?.secondaryBankCount ?? null)}\n\n` +
-              `Layers applied (base first, later wins):\n${layers}`,
+              `POF file: \`${effective.modelFile ?? "(none)"}\`${effective.modelFileSource ? ` — from \`${stripSharedSourcePrefix(effective.modelFileSource, sharedPrefix)}\`` : ""}\n\n` +
+              `Subsystems: ${effective.subsystems.length}${effective.subsystemsSource ? ` — from \`${stripSharedSourcePrefix(effective.subsystemsSource, sharedPrefix)}\`` : ""}\n\n` +
+              `Armor Type: ${effective.armorType ?? "(none)"}${effective.armorTypeSource ? ` — from \`${stripSharedSourcePrefix(effective.armorTypeSource, sharedPrefix)}\`` : ""}\n\n` +
+              `${formatBankLine("Primary", effective.defaultPrimaryBanks, effective.defaultPrimaryBanksSource, pof?.primaryBankCount ?? null, sharedPrefix)}\n\n` +
+              `${formatBankLine("Secondary", effective.defaultSecondaryBanks, effective.defaultSecondaryBanksSource, pof?.secondaryBankCount ?? null, sharedPrefix)}\n\n` +
+              (sharedPrefix ? `Common path: \`${sharedPrefix}\`\n\n` : "") +
+              `Layers applied (base first, later wins):\n${layers}` +
+              (fieldTable ? `\n\n---\n\n${fieldTable}` : ""),
           },
         };
       }
@@ -2492,42 +2514,6 @@ connection.onRequest(
     return null;
   },
 );
-
-/**
- * Given a document URI + line (a ship's/weapon's own `$Name:` line), builds and renders
- * that entry's full "effective definition" - every field this project tracks
- * structurally, synthesized across every layer applied along the active mod's search
- * path (see effectiveEntryFormatter.ts's doc comments for exactly what's covered and
- * what isn't). Backs the "Show effective definition" hover link (a client-side hover
- * provider mirroring the POF viewer's `openPofViewerAtPosition` pattern - see
- * client/src/extension.ts) via a synthesized `fso-tbl-effective:` virtual document, the
- * same round-trip shape `fso-lsp/readVpEntryText` already uses for `fso-tbl-vp:` above.
- * Always returns a string (never null) - an in-band `;;` comment on failure, matching
- * readVpEntryText's own "not found" convention, so the client's content provider doesn't
- * need a separate error path.
- */
-connection.onRequest("fso-lsp/getEffectiveEntryText", (params: { uri: string; line: number }): string => {
-  const ship = (shipEntriesByUri.get(params.uri) ?? []).find((s) => s.nameLine === params.line);
-  const weapon = (weaponEntriesByUri.get(params.uri) ?? []).find((w) => w.nameLine === params.line);
-
-  if (!ship && !weapon) {
-    return ";; No ship/weapon $Name: entry found at this position.";
-  }
-
-  try {
-    const searchDirs = buildSearchPath(fileURLToPath(params.uri));
-    if (ship) {
-      const effective = getEffectiveShipTable(searchDirs).get(ship.name.toLowerCase());
-      return effective ? renderEffectiveShipEntry(effective) : `;; "${ship.name}" not found in the merged ships.tbl view.`;
-    }
-    const effective = getEffectiveWeaponsTable(searchDirs).get((weapon as WeaponEntryInfo).name.toLowerCase());
-    return effective
-      ? renderEffectiveWeaponEntry(effective)
-      : `;; "${(weapon as WeaponEntryInfo).name}" not found in the merged weapons.tbl view.`;
-  } catch (err) {
-    return `;; Could not resolve the active mod's search path: ${err instanceof Error ? err.message : String(err)}`;
-  }
-});
 
 documents.listen(connection);
 connection.listen();
