@@ -23,27 +23,6 @@ let client: LanguageClient;
  */
 const VP_CONTENT_SCHEME = "fso-tbl-vp";
 
-/** Scheme for the synthesized "effective definition" virtual document - see effectiveContentProvider below. */
-const EFFECTIVE_CONTENT_SCHEME = "fso-tbl-effective";
-
-/** A ships.tbl/-shp.tbm or weapons.tbl/-wep.tbm loose or virtual path - the two table kinds effectiveEntryFormatter.ts (server-side) knows how to render. */
-const SHIP_OR_WEAPON_TABLE_PATTERN = /(^|[\\/])(ships|weapons)\.tbl$|-(shp|wep)\.tbm$/i;
-
-/**
- * Builds the virtual document URI for `fsoLsp.openEffectiveDefinition`. The query string
- * carries everything `provideTextDocumentContent` needs to re-fetch fresh content (the
- * source document's URI + the `$Name:` line), mirroring `fso-tbl-vp:`'s `vp`/entry-path
- * query convention. The path is a synthetic filename ending in `.tbl` purely so VSCode's
- * extension-based language association (this package's own `languages[0].extensions`)
- * picks up fso-table syntax highlighting for the opened document, same trick `fso-tbl-vp:`
- * gets for free from its entries' real filenames.
- */
-function buildEffectiveDefinitionUri(sourceUriString: string, line: number, displayName: string): Uri {
-  const safeName = displayName.replace(/[\\/:*?"<>|]/g, "_");
-  const query = new URLSearchParams({ uri: sourceUriString, line: String(line) }).toString();
-  return Uri.from({ scheme: EFFECTIVE_CONTENT_SCHEME, path: `/${safeName} (effective).tbl`, query });
-}
-
 export function activate(context: ExtensionContext): void {
   // build.js (esbuild) bundles server/src/server.ts to dist/server.js alongside this
   // extension's own dist/extension.js, so the shipped .vsix is self-contained and
@@ -111,30 +90,6 @@ export function activate(context: ExtensionContext): void {
     },
   };
   context.subscriptions.push(workspace.registerTextDocumentContentProvider(VP_CONTENT_SCHEME, vpContentProvider));
-
-  /**
-   * Backs `fso-tbl-effective:` documents opened by `fsoLsp.openEffectiveDefinition` - the
-   * "Show effective definition" hover link below. Re-fetches fresh content on every call
-   * (rather than the command pre-fetching once) so the document reflects the latest merge
-   * if it's reopened later, same as `vpContentProvider` above.
-   */
-  const effectiveContentProvider: TextDocumentContentProvider = {
-    async provideTextDocumentContent(uri: Uri): Promise<string> {
-      const params = new URLSearchParams(uri.query);
-      const sourceUri = params.get("uri");
-      const lineParam = params.get("line");
-      if (!sourceUri || lineParam === null) {
-        return ";; missing 'uri'/'line' query parameters on fso-tbl-effective: URI";
-      }
-      try {
-        await clientReady;
-        return await client.sendRequest<string>("fso-lsp/getEffectiveEntryText", { uri: sourceUri, line: Number(lineParam) });
-      } catch (err) {
-        return `;; failed to build effective definition: ${err}`;
-      }
-    },
-  };
-  context.subscriptions.push(workspace.registerTextDocumentContentProvider(EFFECTIVE_CONTENT_SCHEME, effectiveContentProvider));
 
   /**
    * Opens the 3D POF viewer for the `$Subsystem:` entry at `line` in the given document,
@@ -233,43 +188,6 @@ export function activate(context: ExtensionContext): void {
     },
   };
   context.subscriptions.push(languages.registerHoverProvider({ language: "fso-table" }, subsystemHoverProvider));
-
-  /** Invoked only by the hover link below - opens (or reveals) the synthesized effective-definition document for the entry at `line`. */
-  context.subscriptions.push(
-    commands.registerCommand("fsoLsp.openEffectiveDefinition", async (uriString: string, line: number, displayName: string) => {
-      const doc = await workspace.openTextDocument(buildEffectiveDefinitionUri(uriString, line, displayName));
-      await window.showTextDocument(doc, { preview: false });
-    }),
-  );
-
-  /**
-   * "Show effective definition" hover link on a ship's/weapon's own `$Name:` line -
-   * mirrors subsystemHoverProvider's shape exactly (a separate client-side HoverProvider
-   * VSCode merges into the same tooltip as the LSP server's own hover, since LSP
-   * MarkupContent has no `isTrusted` concept and the `command:` link trick needs a real
-   * `vscode.MarkdownString` built client-side either way). Matched purely by line text +
-   * filename (no server round-trip needed just to decide whether to show a link) -
-   * SHIP_OR_WEAPON_TABLE_PATTERN mirrors this project's usual filename-based table-kind
-   * detection (see server-side schemas/index.ts's fileMatch convention).
-   */
-  const effectiveDefinitionHoverProvider: HoverProvider = {
-    provideHover(document, position) {
-      if (!SHIP_OR_WEAPON_TABLE_PATTERN.test(document.uri.fsPath)) {
-        return undefined;
-      }
-      const text = document.lineAt(position.line).text;
-      const match = /^\s*\$Name\s*:\s*(.+?)\s*$/i.exec(text);
-      if (!match) {
-        return undefined;
-      }
-      const args = encodeURIComponent(JSON.stringify([document.uri.toString(), position.line, match[1]]));
-      const markdown = new MarkdownString(`[$(book) Show effective definition](command:fsoLsp.openEffectiveDefinition?${args})`);
-      markdown.isTrusted = true;
-      markdown.supportThemeIcons = true;
-      return new Hover(markdown);
-    },
-  };
-  context.subscriptions.push(languages.registerHoverProvider({ language: "fso-table" }, effectiveDefinitionHoverProvider));
 }
 
 export function deactivate(): Thenable<void> | undefined {

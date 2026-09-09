@@ -61,10 +61,6 @@
       {
         "command": "fsoLsp.openPofViewerAtPosition",
         "title": "Open 3D POF Viewer at Position (FSO Table)"
-      },
-      {
-        "command": "fsoLsp.openEffectiveDefinition",
-        "title": "Show Effective Definition (FSO Table)"
       }
     ],
     "keybindings": [
