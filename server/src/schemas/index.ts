@@ -54,6 +54,7 @@ export function findSchemaForFile(fileNameOrUri: string): TableSchema | null {
   return null;
 }
 
+export { allSchemas };
 export { TableSchema } from "./types";
 export { shipsSchema } from "./ships";
 export { weaponsSchema } from "./weapons";

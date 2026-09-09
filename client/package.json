@@ -73,7 +73,18 @@
         "key": "F12",
         "when": "editorTextFocus && editorLangId == fso-table"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "FS Tables",
+      "properties": {
+        "fsoLsp.unknownFieldSeverity": {
+          "type": "string",
+          "enum": ["off", "warning", "error"],
+          "default": "off",
+          "description": "How to report a $Field:/+Field: this extension doesn't recognize for the table it appears in. A field known to belong to a DIFFERENT table (e.g. a weapons.tbl field pasted into ships.tbl) is always reported as a warning regardless of this setting - this only controls fields unrecognized by every schema this extension knows about, which may simply be real, newer FSO fields it hasn't been taught about yet."
+        }
+      }
+    }
   },
   "scripts": {
     "compile": "tsc -p . --noEmit",

@@ -3,6 +3,7 @@ import * as assert from "node:assert/strict";
 import { parseTable } from "../src/parser";
 import { validateAgainstSchema } from "../src/schemaValidator";
 import { weaponsSchema } from "../src/schemas/weapons";
+import { shipsSchema } from "../src/schemas/ships";
 
 test("does not flag $Impact Explosion:/$Impact Explosion Radius: as out-of-order when they follow $Trail: (real missile weapons.tbl shape)", () => {
   const text = [
@@ -24,6 +25,50 @@ test("does not flag $Impact Explosion:/$Impact Explosion Radius: as out-of-order
   const { sections } = parseTable(text);
   const diagnostics = validateAgainstSchema(sections, weaponsSchema);
   assert.deepEqual(diagnostics, []);
+});
+
+test("flags a weapons.tbl-only field (Model file) pasted into a ships.tbl entry as misplaced, always as a warning", () => {
+  const text = ["#Ship Classes", "$Name: GTF Ulysses", "$Model file: fighter1.pof", "#End"].join("\n");
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, shipsSchema, "error");
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].severity, "warning");
+  assert.match(diagnostics[0].message, /weapons\.tbl field, not recognized in ships\.tbl/);
+});
+
+test("flags a ships.tbl-only field (POF file) pasted into a weapons.tbl entry as misplaced", () => {
+  const text = ["#Primary Weapons", "$Name: Subach HL-7", "$POF file: fighter1.pof", "#End"].join("\n");
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, weaponsSchema);
+  assert.equal(diagnostics.length, 1);
+  assert.match(diagnostics[0].message, /ships\.tbl field, not recognized in weapons\.tbl/);
+});
+
+test("a field owned by 3+ other schemas (Bitmap: rank.tbl/mainhall.tbl/medals.tbl) is ambiguous - never flagged as misplaced, and never reported as unknown either", () => {
+  const text = ["#Ship Classes", "$Name: GTF Ulysses", "$Bitmap: some_icon", "#End"].join("\n");
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, shipsSchema, "error");
+  assert.deepEqual(diagnostics, []);
+});
+
+test("unknownFieldSeverity defaults to off - a genuinely unrecognized field is silent", () => {
+  const text = ["#Ship Classes", "$Name: GTF Ulysses", "$Totally Made Up Field: 1", "#End"].join("\n");
+  const { sections } = parseTable(text);
+  assert.deepEqual(validateAgainstSchema(sections, shipsSchema), []);
+});
+
+test("unknownFieldSeverity: 'warning'/'error' report a genuinely unrecognized field at that severity", () => {
+  const text = ["#Ship Classes", "$Name: GTF Ulysses", "$Totally Made Up Field: 1", "#End"].join("\n");
+  const { sections } = parseTable(text);
+
+  const warnings = validateAgainstSchema(sections, shipsSchema, "warning");
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].severity, "warning");
+  assert.match(warnings[0].message, /not a field ships\.tbl recognizes/);
+
+  const errors = validateAgainstSchema(sections, shipsSchema, "error");
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].severity, "error");
 });
 
 test("does not flag $Impact Explosion Radius:/$Piercing Impact Explosion: as out-of-order in a real missile entry (second false positive, full field cluster)", () => {

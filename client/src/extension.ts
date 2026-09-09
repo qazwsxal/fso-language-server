@@ -62,6 +62,9 @@ export function activate(context: ExtensionContext): void {
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "fso-table" }],
     synchronize: {
+      // Lets the server pull `fsoLsp.*` settings via workspace/configuration and be
+      // notified (workspace/didChangeConfiguration) whenever the user changes one.
+      configurationSection: "fsoLsp",
       // Beyond the open document itself, the server's merged-table/POF/texture caches
       // depend on sibling .tbl/.tbm layers, mod.json (Knossos - the primary source of
       // truth) / mod.ini (fallback) search-path changes, referenced .pof models,

@@ -25,7 +25,7 @@ import {
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { parseTable, ParseResult, ParseDiagnostic, TableSection, LOOSE_SECTION_NAME } from "./parser";
 import { findSchemaForFile, TableSchema } from "./schemas";
-import { validateAgainstSchema } from "./schemaValidator";
+import { validateAgainstSchema, UnknownFieldSeverity } from "./schemaValidator";
 import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef } from "./tableAnalysis/shipEntries";
 import { buildEffectiveShipTable, EffectiveShipEntry } from "./tableAnalysis/mergedShipTable";
 import { extractWeaponEntries, WeaponEntryInfo, WeaponTextureRef } from "./tableAnalysis/weaponEntries";
@@ -109,7 +109,16 @@ const weaponEntriesByUri = new Map<string, WeaponEntryInfo[]>();
 /** Per-document species-entry cache (currently just `$Default IFF:`), keyed by URI. */
 const speciesEntriesByUri = new Map<string, SpeciesEntryInfo[]>();
 
-connection.onInitialize((_params: InitializeParams): InitializeResult => {
+/**
+ * Cached `fsoLsp.unknownFieldSeverity` setting - re-fetched (see refreshConfiguration()
+ * below) whenever the client reports a configuration change, rather than pulled fresh on
+ * every validation pass, so that hot path stays synchronous.
+ */
+let unknownFieldSeverity: UnknownFieldSeverity = "off";
+let hasConfigurationCapability = false;
+
+connection.onInitialize((params: InitializeParams): InitializeResult => {
+  hasConfigurationCapability = !!params.capabilities.workspace?.configuration;
   return {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
@@ -120,6 +129,35 @@ connection.onInitialize((_params: InitializeParams): InitializeResult => {
       declarationProvider: true,
     },
   };
+});
+
+/** Pulls the current `fsoLsp.unknownFieldSeverity` setting from the client, if it supports configuration requests at all. */
+async function refreshConfiguration(): Promise<void> {
+  if (!hasConfigurationCapability) {
+    return;
+  }
+  try {
+    const value = await connection.workspace.getConfiguration({ section: "fsoLsp.unknownFieldSeverity" });
+    unknownFieldSeverity = value === "warning" || value === "error" ? value : "off";
+  } catch {
+    unknownFieldSeverity = "off";
+  }
+}
+
+connection.onInitialized(() => {
+  void refreshConfiguration().then(() => {
+    for (const document of documents.all()) {
+      validateAndPublish(document);
+    }
+  });
+});
+
+connection.onDidChangeConfiguration(() => {
+  void refreshConfiguration().then(() => {
+    for (const document of documents.all()) {
+      validateAndPublish(document);
+    }
+  });
 });
 
 /**
@@ -452,7 +490,7 @@ function validateAndPublish(document: TextDocument): void {
   speciesEntriesByUri.set(document.uri, extractSpeciesEntries(result.sections));
 
   const schema = findSchemaForFile(document.uri);
-  const schemaDiagnostics = schema ? validateAgainstSchema(result.sections, schema) : [];
+  const schemaDiagnostics = schema ? validateAgainstSchema(result.sections, schema, unknownFieldSeverity) : [];
   const ships = shipEntriesByUri.get(document.uri) ?? [];
   const weapons = weaponEntriesByUri.get(document.uri) ?? [];
   const species = speciesEntriesByUri.get(document.uri) ?? [];

@@ -32,6 +32,36 @@ suite("FSO Table Language Server", () => {
     );
   });
 
+  test("fsoLsp.unknownFieldSeverity setting controls whether an unrecognized field is reported, and at what severity", async () => {
+    const tmpPath = path.join(fixturesRoot, "data/tables/_tmp-unknown-field-shp.tbm");
+    fs.writeFileSync(tmpPath, ["#Ship Classes", "$Name: GTF Ulysses", "$Totally Made Up Field: 1", "#End"].join("\n"));
+    const config = vscode.workspace.getConfiguration("fsoLsp");
+    try {
+      const uri = vscode.Uri.file(tmpPath);
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc);
+      const isUnknownFieldDiag = (d: vscode.Diagnostic) => /not a field .* recognizes/i.test(d.message);
+
+      // Default ("off") - the unrecognized field is silent. Give the server a moment to
+      // publish whatever it's going to publish, rather than racing it.
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      assert.ok(
+        !vscode.languages.getDiagnostics(uri).some(isUnknownFieldDiag),
+        `expected no unknown-field diagnostic by default, got: ${JSON.stringify(vscode.languages.getDiagnostics(uri).map((d) => d.message))}`,
+      );
+
+      await config.update("unknownFieldSeverity", "error", vscode.ConfigurationTarget.Workspace);
+      const gotDiagnostic = await waitFor(() => vscode.languages.getDiagnostics(uri).some(isUnknownFieldDiag), 5000);
+      const diagnostics = vscode.languages.getDiagnostics(uri);
+      const unknownDiag = diagnostics.find(isUnknownFieldDiag);
+      assert.ok(gotDiagnostic && unknownDiag, `expected an unknown-field diagnostic once severity is "error", got: ${JSON.stringify(diagnostics.map((d) => d.message))}`);
+      assert.strictEqual(unknownDiag!.severity, vscode.DiagnosticSeverity.Error);
+    } finally {
+      await config.update("unknownFieldSeverity", undefined, vscode.ConfigurationTarget.Workspace);
+      fs.rmSync(tmpPath, { force: true });
+    }
+  });
+
   test("does not flag a turret's own $Flags: as out of order relative to the ship-level $Flags:", async () => {
     // Regression test: a real Blue Planet ships.tbm showed every single turret's
     // $Flags: line flagged "out of the expected field order" - the schema validator has
