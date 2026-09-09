@@ -1,14 +1,22 @@
 {
-  "name": "fso-lsp",
-  "displayName": "FSO Table Language Support",
+  "name": "fs-tables",
+  "displayName": "FS Tables",
   "description": "Language support for FreeSpace Open (FSO) mod table files (.tbl / .tbm)",
   "version": "0.0.1",
-  "private": true,
+  "publisher": "qazwsxal",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Programming Languages"
+  ],
+  "keywords": [
+    "freespace",
+    "freespace open",
+    "fso",
+    "tbl",
+    "tbm"
   ],
   "activationEvents": [
     "onLanguage:fso-table"
@@ -90,7 +98,8 @@
   "scripts": {
     "compile": "tsc -p . --noEmit",
     "pretest": "node ../build.js && tsc -p ./tsconfig.test.json",
-    "test": "node ./out/test/runTest.js"
+    "test": "node ./out/test/runTest.js",
+    "package": "node ../build.js && node ./scripts/package.js"
   },
   "dependencies": {
     "three": "^0.169.0",
@@ -102,6 +111,7 @@
     "@types/three": "^0.169.0",
     "@types/vscode": "^1.85.0",
     "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^2.18.0",
     "mocha": "^10.7.3",
     "typescript": "^5.5.4"
   }

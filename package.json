@@ -1,5 +1,5 @@
 {
-  "name": "fso-lsp-workspace",
+  "name": "fstables-workspace",
   "private": true,
   "workspaces": [
     "client",
