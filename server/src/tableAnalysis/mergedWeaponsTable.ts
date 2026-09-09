@@ -25,6 +25,8 @@ export interface EffectiveWeaponEntry {
   soundsByField: Map<string, FieldMapEntry>;
   /** Same shape as soundsByField, for texture/animation-referencing fields. */
   texturesByField: Map<string, FieldMapEntry>;
+  /** Every other tracked top-level `$Field:` - see WeaponEntryInfo.miscFieldRefs. */
+  miscFieldsByField: Map<string, FieldMapEntry>;
   /** Every file that touched this entry, in application order (base .tbl first, then .tbm layers lowest-to-highest priority). */
   layerSources: string[];
 }
@@ -98,6 +100,7 @@ function applyLayer(result: Map<string, EffectiveWeaponEntry>, resolved: Resolve
         damageTypeSource: null,
         soundsByField: new Map(),
         texturesByField: new Map(),
+        miscFieldsByField: new Map(),
         layerSources: [],
       };
 
@@ -113,6 +116,7 @@ function applyLayer(result: Map<string, EffectiveWeaponEntry>, resolved: Resolve
     }
     applyNamedFieldRefs(merged.soundsByField, entry.soundRefs, sourceLabel);
     applyNamedFieldRefs(merged.texturesByField, entry.textureRefs, sourceLabel);
+    applyNamedFieldRefs(merged.miscFieldsByField, entry.miscFieldRefs, sourceLabel);
     merged.layerSources = [...merged.layerSources, sourceLabel];
 
     result.set(key, merged);

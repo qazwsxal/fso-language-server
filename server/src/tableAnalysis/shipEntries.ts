@@ -89,6 +89,20 @@ export interface ShipEntryInfo {
   /** Bitmap/animation-referencing fields, confirmed against ship.cpp's field list. */
   textureRefs: ShipTextureRef[];
   /**
+   * Every other top-level `$Field:` this entry sets that isn't one of the dedicated,
+   * specially-handled fields above (or a texture/sound field) - a generic catch-all so
+   * the "effective definition" view can show the whole entry rather than just the
+   * handful of fields with custom cross-referencing logic. Deliberately scoped to `$`-
+   * sigil fields only, and only outside a `$Subsystem:` block: `+`/`@`-sigil fields are
+   * overwhelmingly sub-fields of a nested block (e.g. `+BeamSound:` under `$BeamInfo:`)
+   * that this flat, non-block-aware extractor has no way to distinguish from a genuine
+   * top-level field, so dumping them flat would misleadingly imply they're ship-level
+   * scalars. See fso-table-fields-reference project memory for the full field catalog -
+   * most complex fields (`$Shields:`, `$Debris:`, `$Afterburner:`, etc.) open a
+   * multi-line `+`-subfield block and so are intentionally NOT covered by this bucket.
+   */
+  miscFieldRefs: ShipTextureRef[];
+  /**
    * Sound-referencing fields (ship-level and per-subsystem alike, e.g. `$EngineSnd:`,
    * `$AliveSnd:` inside a `$Subsystem:` block) - confirmed (live-verified against
    * ship.cpp/gamesnd.cpp, see [[fso-gamesnd-lookup]] project memory) that every one of
@@ -172,6 +186,25 @@ const SOUND_FIELDS = new Set([
   "turret gun rotationsnd",
 ]);
 
+/**
+ * Every ship-level `$Field:` key with dedicated, specially-handled extraction above -
+ * excluded from the generic `miscFieldRefs` catch-all so a field doesn't show up twice
+ * (once with its proper cross-referencing/typed display, once as a raw misc line).
+ */
+const HANDLED_TOP_LEVEL_KEYS = new Set([
+  "pof file",
+  "default pbanks",
+  "default sbanks",
+  "armor type",
+  "shield armor type",
+  "species",
+  "ai class",
+  "explosion animations",
+  "target priority groups",
+  ...TEXTURE_FIELDS,
+  ...SOUND_FIELDS,
+]);
+
 /** Extracts per-ship model-file + subsystem-reference info from a parsed ships.tbl/*-shp.tbm. */
 export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
   const entries: ShipEntryInfo[] = [];
@@ -209,6 +242,7 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           targetPriorityGroupsLine: null,
           textureRefs: [],
           soundRefs: [],
+          miscFieldRefs: [],
           noCreate: false,
           remove: false,
         };
@@ -289,6 +323,8 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
       } else if (key === "target priority groups") {
         current.targetPriorityGroups = splitNameList(field.value);
         current.targetPriorityGroupsLine = field.line;
+      } else if (field.sigil === "$" && !HANDLED_TOP_LEVEL_KEYS.has(key) && field.value.trim()) {
+        current.miscFieldRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
       }
     }
   }

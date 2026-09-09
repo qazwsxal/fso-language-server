@@ -68,3 +68,26 @@ test("captures the same field name used twice under different parent blocks (+Am
     ["10", "11"],
   );
 });
+
+test("captures an untracked top-level $Field: into miscFieldRefs, but not a dedicated field or a bare marker", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$Species: Terran",
+    "$Score: 15",
+    "$Density: 1.5",
+    "$Collision Physics:",
+    "#End",
+  ].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.deepEqual(
+    ship.miscFieldRefs.map((r) => `${r.field}=${r.value}`),
+    ["Score=15", "Density=1.5"],
+  );
+});
+
+test("does not attribute a $Field: inside a $Subsystem: block to the ship's miscFieldRefs", () => {
+  const text = ["#Ship Classes", "$Name: GTF Ulysses", "$Subsystem: turret01, 5, 3", "$Engine Wash: 3", "#End"].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.deepEqual(ship.miscFieldRefs, []);
+});

@@ -28,6 +28,14 @@ export interface WeaponEntryInfo {
    * `parse_shockwave_info()` function, `pre_char` = `"$"`/`"+"`).
    */
   soundRefs: WeaponTextureRef[];
+  /**
+   * Every other top-level `$Field:` this entry sets that isn't one of the dedicated,
+   * specially-handled fields above (or a texture/sound field) - same generic catch-all
+   * as ShipEntryInfo.miscFieldRefs, and the same `$`-sigil-only scope boundary applies
+   * (weapons.tbl has no block-scope tracking at all, so a `+`/`@`-sigil field can't be
+   * reliably distinguished from a nested sub-field of e.g. `$BeamInfo:`/`$Homing:`).
+   */
+  miscFieldRefs: WeaponTextureRef[];
   /** Modular-table-only sentinels (see fso-table-format): only relevant when merging .tbm layers. */
   noCreate: boolean;
   remove: boolean;
@@ -70,6 +78,12 @@ const SOUND_FIELDS = new Set([
   "shockwave sound",
 ]);
 
+/**
+ * Every weapon-level `$Field:` key with dedicated, specially-handled extraction above -
+ * excluded from the generic `miscFieldRefs` catch-all so a field doesn't show up twice.
+ */
+const HANDLED_TOP_LEVEL_KEYS = new Set(["model file", "damage type", ...DOLLAR_TEXTURE_FIELDS, ...SOUND_FIELDS]);
+
 /** Extracts per-weapon model-file info from a parsed weapons.tbl/*-wep.tbm. */
 export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[] {
   const entries: WeaponEntryInfo[] = [];
@@ -94,6 +108,7 @@ export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[
           damageTypeLine: null,
           textureRefs: [],
           soundRefs: [],
+          miscFieldRefs: [],
           noCreate: false,
           remove: false,
         };
@@ -134,6 +149,8 @@ export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[
         current.textureRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
       } else if (SOUND_FIELDS.has(key) && field.value.trim()) {
         current.soundRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
+      } else if (!HANDLED_TOP_LEVEL_KEYS.has(key) && field.value.trim()) {
+        current.miscFieldRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
       }
     }
   }
