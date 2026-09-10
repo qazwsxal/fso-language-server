@@ -18,8 +18,7 @@ This implementation was informed by the following projects' documentation, forma
 
 - [mjn's FSO Tables](https://github.com/MjnMixael/FSO-Table-Syntax-Extension) — an earlier VS Code
   syntax extension for FSO table/mission files.
-- [pof-tools](https://github.com/Baezon/pof-tools) — for how a POF model's special points/subsystems
-  are conventionally rendered and organized.
+- [pof-tools](https://github.com/Baezon/pof-tools) — a reference for POF model structure and conventions.
 - The [FreeSpace Open source code project](https://github.com/scp-fs2open/fs2open.github.com) — the
   ground truth for table-parsing and POF-format behavior throughout this project.
 - [Knossos.NET](https://github.com/KnossosNET/Knossos.NET) — for mod search-path/dependency
