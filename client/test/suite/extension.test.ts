@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 
 const fixturesRoot = path.resolve(__dirname, "../../../test/fixtures/mymod");
 
-suite("FSO Language Server", () => {
+suite("FreeSpace Open Language Server", () => {
   test("flags an unclosed #Section as an error diagnostic", async () => {
     const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/broken.tbl"));
     const doc = await vscode.workspace.openTextDocument(uri);
