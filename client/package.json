@@ -1,11 +1,11 @@
 {
-  "name": "fso-modding-tools",
-  "displayName": "FSO Modding Tools",
+  "name": "fso-language-server",
+  "displayName": "FSO Language Server",
   "description": "Language support and tools for FreeSpace Open modding: tables, models, missions and more.",
   "version": "0.0.1",
   "publisher": "qazwsxal",
   "license": "MIT",
-  "repository": {"url": "https://github.com/qazwsxal/fs-tables"},
+  "repository": {"url": "https://github.com/qazwsxal/fso-language-server"},
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -80,7 +80,7 @@
       }
     ],
     "configuration": {
-      "title": "FSO Modding Tools",
+      "title": "FSO Language Server",
       "properties": {
         "fsoLsp.unknownFieldSeverity": {
           "type": "string",

@@ -73,7 +73,7 @@ export function activate(context: ExtensionContext): void {
     },
   };
 
-  client = new LanguageClient("fsoLsp", "FSO Table Language Server", serverOptions, clientOptions);
+  client = new LanguageClient("fsoLsp", "FSO Language Server", serverOptions, clientOptions);
   const clientReady = client.start(); // vscode-languageclient v9: start() itself resolves once initialized (no separate onReady()).
 
   /**

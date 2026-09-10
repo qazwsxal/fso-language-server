@@ -1,4 +1,4 @@
-# FSO Modding Tools
+# FSO Language Server
 
 A VS Code extension and language server for FreeSpace Open modding: `.tbl`/`.tbm` tables and `.fs2`/`.fc2` missions.
 

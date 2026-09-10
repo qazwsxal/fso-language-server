@@ -1,4 +1,4 @@
-# FSO Modding Tools
+# FSO Language Server
 
 Language support and tools for [FreeSpace Open](https://www.hard-light.net/wiki/index.php/FreeSpace_Open)
 (FSO) modding: `.tbl`/`.tbm` mod tables, `.fs2`/`.fc2` missions, and `.pof` models — syntax highlighting
