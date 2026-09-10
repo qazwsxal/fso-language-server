@@ -2741,18 +2741,60 @@ function buildPofGeometryResult(
 }
 
 /**
+ * Looks up `map` by `uri`, tolerant of a confirmed `vscode.Uri.toString()` quirk on
+ * Windows: the SAME open document's uri serializes with an unencoded drive-letter
+ * colon ("file:///e:/...") when this extension's own code calls `.toString()` on it
+ * (e.g. inside a hover provider, building a command-link argument), but with it
+ * percent-encoded ("file:///e%3A/...") when vscode-languageclient's own internal
+ * document-sync feature calls the exact same method while sending `textDocument/
+ * didOpen` - and `vscode-languageserver`'s `TextDocuments` class keys its map by the
+ * raw wire string with no normalization of its own, so those two encodings of the
+ * identical file never compare equal. Every standard LSP request (hover, completion,
+ * diagnostics, go-to-definition) is built entirely by vscode-languageclient itself and
+ * so is internally consistent; this bites only a hand-built document-uri argument to a
+ * custom request - the one below is the only place in this codebase that does that.
+ * Falls back to a full, uri-decoded-and-lowercased scan only when the direct key
+ * lookup misses, so the common case (already-matching keys) stays a plain Map.get().
+ */
+function getByUri<T>(map: Map<string, T>, uri: string): T | undefined {
+  const direct = map.get(uri);
+  if (direct !== undefined) {
+    return direct;
+  }
+  let normalizedTarget: string;
+  try {
+    normalizedTarget = decodeURIComponent(uri).toLowerCase();
+  } catch {
+    return undefined;
+  }
+  for (const [key, value] of map) {
+    try {
+      if (decodeURIComponent(key).toLowerCase() === normalizedTarget) {
+        return value;
+      }
+    } catch {
+      // A key that fails to percent-decode can't match a well-formed uri either way.
+    }
+  }
+  return undefined;
+}
+
+/**
  * Given a document URI + line, finds the ship `$Subsystem:` entry at that exact line
  * (mirrors the subsystem-hover lookup above), resolves and decodes its POF's full
  * geometry, and returns everything the client's 3D viewer webview needs to render
- * every submodel and highlight the one matching this subsystem. Returns null for any
- * line that isn't a `$Subsystem:` entry (or whose model can't be resolved) so the
- * client's go-to-definition provider knows to fall through to normal behavior instead
- * of opening a viewer.
+ * every submodel and highlight the one matching this subsystem. Returns a `{ error }`
+ * object instead of a result for any line that isn't a `$Subsystem:`/`$POF file:` entry,
+ * or whose model can't be resolved - distinguished by reason (rather than a bare `null`,
+ * as an earlier version returned for both) specifically so a failure reported against
+ * real-world data can be diagnosed remotely instead of just "nothing happened, no
+ * information why". F12's own call site (unlike the hover-link command) ignores the
+ * `error` field and falls through to normal go-to-definition either way.
  */
 connection.onRequest(
   "fso-lsp/getPofGeometryForSubsystem",
-  (params: { uri: string; line: number }): PofGeometryForSubsystemResult | null => {
-    const ships = shipEntriesByUri.get(params.uri) ?? [];
+  (params: { uri: string; line: number }): PofGeometryForSubsystemResult | { error: string } => {
+    const ships = getByUri(shipEntriesByUri, params.uri) ?? [];
 
     for (const ship of ships) {
       // `$POF file:` itself has no single submodel to highlight - buildPofGeometryResult
@@ -2764,15 +2806,22 @@ connection.onRequest(
         continue;
       }
 
+      // resolvePofForShipEntry() itself already falls back to the mod's merged/effective
+      // $POF file: (a .tbm override block for this ship may not repeat that field at
+      // all), so don't gate on ship.modelFile - this document's own locally-parsed
+      // value - before even trying; only use it as a display label, with a generic
+      // fallback when this block doesn't set it locally.
       const pof = resolvePofForShipEntry(params.uri, ship);
-      if (!pof || !ship.modelFile) {
-        return null;
+      if (!pof) {
+        return {
+          error: `Couldn't resolve model "${ship.modelFile ?? "(not set in this document - check a merged .tbm layer)"}" for ship "${ship.name}" along the mod's search path.`,
+        };
       }
 
-      return buildPofGeometryResult(pof, ship.modelFile, subsystem ? subsystem.name : null);
+      return buildPofGeometryResult(pof, ship.modelFile ?? "(unknown model file)", subsystem ? subsystem.name : null);
     }
 
-    return null;
+    return { error: `Line ${params.line + 1} isn't a $Subsystem: or $POF file: entry in this document.` };
   },
 );
 

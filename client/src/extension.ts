@@ -105,23 +105,49 @@ export function activate(context: ExtensionContext): void {
   context.subscriptions.push(workspace.registerTextDocumentContentProvider(VP_CONTENT_SCHEME, vpContentProvider));
 
   /**
-   * Opens the 3D POF viewer for the `$Subsystem:` entry at `line` in the given document,
-   * if there is one. Returns true if it did (caller should stop there instead of falling
-   * through to normal go-to-definition).
+   * Opens the 3D POF viewer for the `$Subsystem:`/`$POF file:` entry at `line` in the
+   * given document, if there is one. Returns true if it did (caller should stop there
+   * instead of falling through to normal go-to-definition).
+   *
+   * `uriString` MUST come from `client.code2ProtocolConverter.asUri(uri)`, never a raw
+   * `uri.toString()` - reported and confirmed against a real large mod on Windows:
+   * every STANDARD LSP feature (hover, completion, diagnostics, go-to-definition) is
+   * routed by vscode-languageclient itself through that converter when sending a
+   * document's uri to the server, but this extension's own custom
+   * `fso-lsp/getPofGeometryForSubsystem` request built its uri by hand - and on at
+   * least one real workspace the two didn't match (almost certainly Windows drive-
+   * letter casing), so the server's `documents`/`shipEntriesByUri` lookups (keyed by
+   * the converter's uri) silently found nothing for a uri that worked everywhere else.
+   * Every other custom request in this file already happened to only need non-document
+   * identifiers (a raw filesystem path, a VP archive path) and so never hit this.
+   *
+   * `showWarningOnFailure` is true only for the hover-link path (fsoLsp.
+   * openPofViewerAtPosition below): a null/failed result there has no fallback
+   * navigation to fall through to, so silently doing nothing on click is
+   * indistinguishable from the link being broken - a real, reported symptom on models
+   * this extension's own synthetic test fixtures never exercise (e.g. a `$POF file:`
+   * that can't be resolved along the mod's actual search path). F12's own call site
+   * intentionally stays silent on failure since it already falls through to normal
+   * go-to-definition right after.
    */
-  async function openPofViewerAt(uriString: string, line: number): Promise<boolean> {
+  async function openPofViewerAt(uriString: string, line: number, showWarningOnFailure = false): Promise<boolean> {
     try {
       await clientReady;
-      const result = await client.sendRequest<PofGeometryForSubsystemResult | null>(
+      const result = await client.sendRequest<PofGeometryForSubsystemResult | { error: string }>(
         "fso-lsp/getPofGeometryForSubsystem",
         { uri: uriString, line },
       );
-      if (result) {
+      if (!("error" in result)) {
         showPofViewer(context, result);
         return true;
       }
-    } catch {
-      // Fall through to normal go-to-definition.
+      if (showWarningOnFailure) {
+        void window.showWarningMessage(`Couldn't open the 3D viewer: ${result.error}`);
+      }
+    } catch (err) {
+      if (showWarningOnFailure) {
+        void window.showWarningMessage(`Couldn't open the 3D viewer: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     return false;
   }
@@ -152,7 +178,7 @@ export function activate(context: ExtensionContext): void {
     commands.registerCommand("fsoLsp.revealDefinitionOrPofViewer", async () => {
       const editor = window.activeTextEditor;
       if (editor && editor.document.languageId === "fso-table") {
-        if (await openPofViewerAt(editor.document.uri.toString(), editor.selection.active.line)) {
+        if (await openPofViewerAt(client.code2ProtocolConverter.asUri(editor.document.uri), editor.selection.active.line)) {
           return;
         }
       }
@@ -163,7 +189,7 @@ export function activate(context: ExtensionContext): void {
   /** Invoked only by the hover link below - see its doc comment for why this is a separate, explicit-args command rather than reading the active editor's cursor position. */
   context.subscriptions.push(
     commands.registerCommand("fsoLsp.openPofViewerAtPosition", (uriString: string, line: number) => {
-      void openPofViewerAt(uriString, line);
+      void openPofViewerAt(uriString, line, true);
     }),
   );
 
@@ -199,7 +225,7 @@ export function activate(context: ExtensionContext): void {
       if (!match) {
         return undefined;
       }
-      const args = encodeURIComponent(JSON.stringify([document.uri.toString(), position.line]));
+      const args = encodeURIComponent(JSON.stringify([client.code2ProtocolConverter.asUri(document.uri), position.line]));
       const markdown = new MarkdownString(`[$(eye) Open 3D view](command:fsoLsp.openPofViewerAtPosition?${args})`);
       markdown.isTrusted = true;
       markdown.supportThemeIcons = true;
