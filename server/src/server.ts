@@ -91,6 +91,7 @@ import { PofModel } from "./pof/types";
 import { decodeSubmodelGeometry } from "./pof/geometry";
 import { classifySubmodels } from "./pof/classify";
 import { buildTextureIndex } from "./textureIndex";
+import { buildPofFileIndex, PofFileIndexEntry } from "./pofFileIndex";
 import { readVpIndex, readVpEntry } from "./vp/reader";
 
 /**
@@ -568,6 +569,8 @@ connection.onDidChangeWatchedFiles(() => {
   effectiveObjectTypesTableCache.clear();
   textureIndexCache.clear();
   textureNamesSortedCache.clear();
+  pofFileIndexCache.clear();
+  pofFileNamesSortedCache.clear();
 });
 
 function validateAndPublish(document: TextDocument): void {
@@ -915,6 +918,36 @@ function getSortedTextureNames(searchDirs: string[]): string[] {
   }
   const names = Array.from(getTextureIndex(searchDirs).keys()).sort();
   textureNamesSortedCache.set(key, names);
+  return names;
+}
+
+/** Cache of the `.pof` filename index (see pofFileIndex.ts), same cache-key/invalidation convention as textureIndexCache above. */
+const pofFileIndexCache = new Map<string, Map<string, PofFileIndexEntry>>();
+
+function getPofFileIndex(searchDirs: string[]): Map<string, PofFileIndexEntry> {
+  const key = searchDirs.join("|");
+  const cached = pofFileIndexCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const index = buildPofFileIndex(searchDirs);
+  pofFileIndexCache.set(key, index);
+  return index;
+}
+
+/** Sorted, on-disk-cased `.pof` filename list - same rationale as textureNamesSortedCache above. */
+const pofFileNamesSortedCache = new Map<string, string[]>();
+
+function getSortedPofFileNames(searchDirs: string[]): string[] {
+  const key = searchDirs.join("|");
+  const cached = pofFileNamesSortedCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const names = Array.from(getPofFileIndex(searchDirs).values())
+    .map((e) => e.displayName)
+    .sort();
+  pofFileNamesSortedCache.set(key, names);
   return names;
 }
 
@@ -1600,13 +1633,24 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
     const current = findCurrentShipEntry(ships, params.position.line);
     const pof = current ? resolvePofForShipEntry(params.textDocument.uri, current) : null;
     if (pof) {
-      return pof.subobjects
+      const submodelItems = pof.subobjects
         .filter((s) => s.name)
         .map((s) => ({
           label: s.name as string,
           kind: CompletionItemKind.Reference,
           detail: `Subsystem in ${current?.modelFile}`,
         }));
+      // engine/weapons/communication/sensors/navigation have no submodel of their own -
+      // FSO resolves them against an SPCL "special point" instead (see
+      // normalizeSpecialPointName's doc comment below).
+      const specialPointItems = pof.specialPoints
+        .filter((p) => p.name)
+        .map((p) => ({
+          label: normalizeSpecialPointName(p.name),
+          kind: CompletionItemKind.Value,
+          detail: `Special point in ${current?.modelFile}`,
+        }));
+      return [...submodelItems, ...specialPointItems];
     }
   }
 
@@ -1678,6 +1722,22 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
       try {
         const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
         const names = getSortedTextureNames(searchDirs);
+        const range = computeLineValueRange(doc, params.position.line);
+        return names.map((name) => ({
+          label: name,
+          kind: CompletionItemKind.File,
+          filterText: name,
+          textEdit: { range, newText: name },
+        }));
+      } catch {
+        return [];
+      }
+    }
+
+    if (fieldKey === "pof file" || fieldKey === "model file") {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const names = getSortedPofFileNames(searchDirs);
         const range = computeLineValueRange(doc, params.position.line);
         return names.map((name) => ({
           label: name,

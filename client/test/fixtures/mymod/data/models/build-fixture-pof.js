@@ -18,8 +18,14 @@
  *                 square in the XY plane) that decodes to 2 triangles - this is the
  *                 one exercised by the 3D-viewer / go-to-definition tests.
  *
+ * Plus one SPCL "special point" named "$comm" - a non-geometric marker (position +
+ * radius, no submodel of its own), the kind engine/weapons/communication/sensors/
+ * navigation subsystems actually resolve against (see normalizeSpecialPointName() in
+ * server/src/server.ts). Used by the ships.tbl fixture's "GTF Ulysses" $Subsystem: comm.
+ *
  * Must stay consistent with client/test/fixtures/mymod/data/tables/ships.tbl:
  *  - $Subsystem: engine01 / turret01 must match subobject names here.
+ *  - $Subsystem: comm must match the SPCL special point's name (minus its "$") here.
  *  - $Default PBanks: declares 1 bank but GPNT below declares 2 - existing test
  *    "flags a $Default PBanks: count mismatch" depends on that mismatch.
  */
@@ -159,7 +165,13 @@ const turret01 = chunk("OBJ2", buildObj2(2, 0, vec3(2, 0, 0), "turret01", buildQ
 const gpnt = chunk("GPNT", i32(2)); // primary bank count = 2 (ships.tbl fixture deliberately declares 1, to exercise the mismatch diagnostic)
 const mpnt = chunk("MPNT", i32(0)); // secondary bank count = 0
 
-const pof = Buffer.concat([header, txtr, detail0, engine01, turret01, gpnt, mpnt]);
+// One SPCL special point: name (with its conventional leading "$"), properties, position, radius.
+const spcl = chunk(
+  "SPCL",
+  Buffer.concat([i32(1), pofString("$comm"), pofString(""), vec3(0, 0, 3), f32(0.5)]),
+);
+
+const pof = Buffer.concat([header, txtr, detail0, engine01, turret01, gpnt, mpnt, spcl]);
 
 const outPath = path.join(__dirname, "fighter01.pof");
 fs.writeFileSync(outPath, pof);

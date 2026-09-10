@@ -558,6 +558,55 @@ suite("FSO Table Language Server", () => {
     assert.strictEqual(rangeText, "railgun-bitmap");
   });
 
+  test("completes $POF file: values from every .pof under the mod's data/models", async () => {
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const pofFileLine = lines.findIndex((l) => l.includes("$POF file: fighter01.pof"));
+    assert.ok(pofFileLine >= 0, "fixture must contain a $POF file: fighter01.pof line");
+    const lineLength = lines[pofFileLine].length;
+
+    const list = (await vscode.commands.executeCommand(
+      "vscode.executeCompletionItemProvider",
+      uri,
+      new vscode.Position(pofFileLine, lineLength),
+    )) as vscode.CompletionList;
+    const labels = list.items.map((i) => (typeof i.label === "string" ? i.label : i.label.label));
+    assert.ok(
+      labels.includes("fighter01.pof"),
+      `expected fighter01.pof among $POF file: completions, got: ${JSON.stringify(labels)}`,
+    );
+  });
+
+  test("completes $Subsystem: names from both the model's submodels and its special points", async () => {
+    // fighter01.pof (see build-fixture-pof.js) has submodels "engine01"/"turret01" plus
+    // one SPCL special point "$comm" - engine/weapons/communication/sensors/navigation
+    // subsystems resolve against a special point rather than a submodel (see
+    // normalizeSpecialPointName's doc comment in server/src/server.ts), so completion
+    // needs to offer both kinds.
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const subsystemLine = lines.findIndex((l) => l.includes("$Subsystem: comm,"));
+    assert.ok(subsystemLine >= 0, "fixture must contain a $Subsystem: comm, line");
+    const lineLength = lines[subsystemLine].length;
+
+    const list = (await vscode.commands.executeCommand(
+      "vscode.executeCompletionItemProvider",
+      uri,
+      new vscode.Position(subsystemLine, lineLength),
+    )) as vscode.CompletionList;
+    const labels = list.items.map((i) => (typeof i.label === "string" ? i.label : i.label.label));
+    assert.ok(labels.includes("turret01"), `expected the submodel "turret01" among $Subsystem: completions, got: ${JSON.stringify(labels)}`);
+    assert.ok(labels.includes("comm"), `expected the special point "comm" among $Subsystem: completions, got: ${JSON.stringify(labels)}`);
+  });
+
   test("provides an outline for ships.tbl with a section and per-ship symbols", async () => {
     const shipsTblPath = path.join(fixturesRoot, "data/tables/ships.tbl");
     const uri = vscode.Uri.file(shipsTblPath);
