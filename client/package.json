@@ -1,7 +1,7 @@
 {
-  "name": "fs-tables",
-  "displayName": "FS Tables",
-  "description": "Language support for FreeSpace Open (FSO) mod table files (.tbl / .tbm)",
+  "name": "fso-modding-tools",
+  "displayName": "FSO Modding Tools",
+  "description": "Language support and tools for FreeSpace Open modding: tables, models, missions and more.",
   "version": "0.0.1",
   "publisher": "qazwsxal",
   "license": "MIT",
@@ -80,7 +80,7 @@
       }
     ],
     "configuration": {
-      "title": "FS Tables",
+      "title": "FSO Modding Tools",
       "properties": {
         "fsoLsp.unknownFieldSeverity": {
           "type": "string",

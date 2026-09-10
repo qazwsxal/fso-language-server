@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the "FS Tables" extension are documented in this file.
+All notable changes to the "FSO Modding Tools" extension are documented in this file.
 
 ## [0.0.1] - Unreleased
 

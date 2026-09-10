@@ -1,8 +1,9 @@
-# FS Tables
+# FSO Modding Tools
 
-Language support for [FreeSpace Open](https://www.hard-light.net/wiki/index.php/FreeSpace_Open) (FSO)
-mod table files (`.tbl` / `.tbm`) — syntax highlighting plus a language server that understands FSO's
-`.tbl`/`.tbm` modular-table merge semantics, VP archive contents, and POF model files.
+Language support and tools for [FreeSpace Open](https://www.hard-light.net/wiki/index.php/FreeSpace_Open)
+(FSO) modding: `.tbl`/`.tbm` mod tables, `.fs2`/`.fc2` missions, and `.pof` models — syntax highlighting
+plus a language server that understands FSO's modular-table merge semantics, VP archive contents, and
+POF model files.
 
 ## Features
 

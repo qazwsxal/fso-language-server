@@ -1,6 +1,6 @@
-# FS Tables
+# FSO Modding Tools
 
-A VS Code extension and language server for FreeSpace Open (FSO) mod files — `.tbl`/`.tbm` tables and `.fs2`/`.fc2` missions.
+A VS Code extension and language server for FreeSpace Open modding: `.tbl`/`.tbm` tables and `.fs2`/`.fc2` missions.
 
 ## Features
 
