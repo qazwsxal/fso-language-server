@@ -5,6 +5,7 @@
   "version": "0.0.1",
   "publisher": "qazwsxal",
   "license": "MIT",
+  "repository": {"url": "https://github.com/qazwsxal/fs-tables"},
   "engines": {
     "vscode": "^1.85.0"
   },
