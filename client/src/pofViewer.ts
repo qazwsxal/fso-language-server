@@ -27,6 +27,7 @@ export interface PofGeometryForSubsystemResult {
   submodels: SubmodelGeometryPayload[];
   detailLevelCount: number;
   specialPoints: SpecialPointPayload[];
+  targetSpecialPointIndex: number;
 }
 
 /**
@@ -66,7 +67,11 @@ export function showPofViewer(context: vscode.ExtensionContext, result: PofGeome
     existing.panel.reveal(vscode.ViewColumn.Beside, true);
     const newFingerprint = fingerprint(result);
     if (newFingerprint === existing.fingerprint) {
-      existing.panel.webview.postMessage({ type: "highlight", targetSubmodelIndex: result.targetSubmodelIndex });
+      existing.panel.webview.postMessage({
+        type: "highlight",
+        targetSubmodelIndex: result.targetSubmodelIndex,
+        targetSpecialPointIndex: result.targetSpecialPointIndex,
+      });
     } else {
       existing.fingerprint = newFingerprint;
       existing.panel.webview.postMessage({ type: "geometry", ...result });

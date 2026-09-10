@@ -39,12 +39,15 @@ interface GeometryMessage {
   /** Number of detail (LOD) levels this model declares - a detail-level picker is only shown when this is more than 1. */
   detailLevelCount: number;
   specialPoints: SpecialPointPayload[];
+  /** Index into `specialPoints` the current `$Subsystem:` resolved to (mutually exclusive with targetSubmodelIndex), or -1. Only this one point's sphere is ever shown - see buildSpecialPointMarker's doc comment for why. */
+  targetSpecialPointIndex: number;
 }
 
 /** Sent instead of a full GeometryMessage when re-triggering F12 on a different `$Subsystem:` of the SAME, already-rendered model - see pofViewer.ts's fingerprint() doc comment. */
 interface HighlightMessage {
   type: "highlight";
   targetSubmodelIndex: number;
+  targetSpecialPointIndex: number;
 }
 
 declare function acquireVsCodeApi(): {
@@ -71,6 +74,11 @@ let currentMeshes: Map<number, THREE.Mesh> | null = null;
 let currentClassifications: Map<number, { detailLevel: number; isDebris: boolean }> | null = null;
 let currentTargetIndex = -1;
 let currentWireframe: THREE.LineSegments | null = null;
+/** The current model's special points (from the last GeometryMessage) - kept around so applyHighlight() can look one up by index without needing a full geometry re-render. */
+let currentSpecialPoints: SpecialPointPayload[] = [];
+/** The one currently-shown special-point sphere+label, if any - see buildSpecialPointMarker's doc comment for why only ever one is shown at a time. */
+let currentSpecialPointMarker: THREE.Group | null = null;
+let currentTargetSpecialPointIndex = -1;
 
 /** Which detail level is currently shown (submodels with detailLevel === -1, i.e. not part of any LOD hierarchy, are always shown regardless). */
 let selectedDetailLevel = 0;
@@ -258,11 +266,30 @@ function updateVisibility(): void {
   }
 }
 
+/** Disposes every mesh/sprite geometry and material (including a sprite's canvas texture, which Material.dispose() alone doesn't free) under `root`, recursively. */
+function disposeObject3D(root: THREE.Object3D): void {
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const mat = (mesh as unknown as { material?: THREE.Material | THREE.Material[] }).material;
+    const mats = Array.isArray(mat) ? mat : mat ? [mat] : [];
+    for (const m of mats) {
+      (m as THREE.SpriteMaterial).map?.dispose();
+      m.dispose();
+    }
+  });
+}
+
 /**
  * Builds one special point's marker: a translucent sphere at its position sized to its
  * radius (pof-tools' "lollipop" treatment - see SPECIAL_POINT_COLOR's doc comment),
  * plus a small always-facing-camera text label above it since, unlike pof-tools, this
- * viewer has no side tree list a point's name could otherwise come from.
+ * viewer has no side tree list a point's name could otherwise come from. Only ever
+ * shown for the one special point the current `$Subsystem:` resolved to - unlike
+ * pof-tools' always-visible-but-recolored tree of every point, this viewer has no
+ * per-point selection UI, so showing every special point permanently would just be
+ * clutter with no way to tell which one is relevant (reported feedback: labels like
+ * "$Engine"/"$Weapons"/"$Sensors" overlapping on screen at all times).
  */
 function buildSpecialPointMarker(sp: SpecialPointPayload): THREE.Group {
   const group = new THREE.Group();
@@ -306,18 +333,12 @@ function renderGeometry(msg: GeometryMessage): void {
 
   if (currentGroup) {
     scene.remove(currentGroup);
-    currentGroup.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      if (mesh.geometry) mesh.geometry.dispose();
-      const mat = (mesh as unknown as { material?: THREE.Material | THREE.Material[] }).material;
-      const mats = Array.isArray(mat) ? mat : mat ? [mat] : [];
-      for (const m of mats) {
-        // Sprite labels (special-point name tags) carry a canvas texture on `.map` that
-        // Material.dispose() alone doesn't free.
-        (m as THREE.SpriteMaterial).map?.dispose();
-        m.dispose();
-      }
-    });
+    disposeObject3D(currentGroup);
+  }
+  if (currentSpecialPointMarker) {
+    disposeObject3D(currentSpecialPointMarker);
+    currentSpecialPointMarker = null;
+    currentTargetSpecialPointIndex = -1;
   }
 
   const group = new THREE.Group();
@@ -366,9 +387,10 @@ function renderGeometry(msg: GeometryMessage): void {
     }
   });
 
-  for (const sp of msg.specialPoints) {
-    group.add(buildSpecialPointMarker(sp));
-    const dist = Math.hypot(sp.position[0], sp.position[1], sp.position[2]) + sp.radius;
+  currentSpecialPoints = msg.specialPoints;
+  const targetSpecialPoint = msg.specialPoints[msg.targetSpecialPointIndex];
+  if (targetSpecialPoint) {
+    const dist = Math.hypot(...targetSpecialPoint.position) + targetSpecialPoint.radius;
     if (dist > boundingRadius) {
       boundingRadius = dist;
     }
@@ -393,7 +415,7 @@ function renderGeometry(msg: GeometryMessage): void {
   const hasDebris = Array.from(classifications.values()).some((c) => c.isDebris);
   buildControls(msg.detailLevelCount, hasDebris);
   updateVisibility();
-  applyHighlight(msg.targetSubmodelIndex);
+  applyHighlight(msg.targetSubmodelIndex, msg.targetSpecialPointIndex);
 
   camera.position.set(boundingRadius * 1.5, boundingRadius * 1.2, boundingRadius * 1.5);
   // near scales with the model instead of staying pinned at a tiny constant - a fixed
@@ -421,7 +443,7 @@ function renderGeometry(msg: GeometryMessage): void {
  * happens to live on a currently-hidden detail level (or a debris piece, while debris
  * is hidden) would silently highlight something the user can't see.
  */
-function applyHighlight(targetSubmodelIndex: number): void {
+function applyHighlight(targetSubmodelIndex: number, targetSpecialPointIndex: number): void {
   if (!scene || !currentGroup || !currentMeshes) {
     return;
   }
@@ -443,6 +465,20 @@ function applyHighlight(targetSubmodelIndex: number): void {
   }
   if (visibilityChanged) {
     updateVisibility();
+  }
+
+  if (targetSpecialPointIndex !== currentTargetSpecialPointIndex) {
+    if (currentSpecialPointMarker) {
+      currentGroup.remove(currentSpecialPointMarker);
+      disposeObject3D(currentSpecialPointMarker);
+      currentSpecialPointMarker = null;
+    }
+    const sp = currentSpecialPoints[targetSpecialPointIndex];
+    if (sp) {
+      currentSpecialPointMarker = buildSpecialPointMarker(sp);
+      currentGroup.add(currentSpecialPointMarker);
+    }
+    currentTargetSpecialPointIndex = targetSpecialPointIndex;
   }
 
   if (targetSubmodelIndex === currentTargetIndex) {
@@ -484,7 +520,7 @@ window.addEventListener("message", (event: MessageEvent) => {
   if (msg && msg.type === "geometry") {
     renderGeometry(msg);
   } else if (msg && msg.type === "highlight") {
-    applyHighlight(msg.targetSubmodelIndex);
+    applyHighlight(msg.targetSubmodelIndex, msg.targetSpecialPointIndex);
   }
 });
 

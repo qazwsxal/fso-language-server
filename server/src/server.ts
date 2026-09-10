@@ -2403,14 +2403,31 @@ connection.onHover((params): Hover | null => {
       };
     }
 
+    // engine/weapons/communication/sensors/navigation subsystems are non-geometric -
+    // FSO resolves them against an SPCL "special point" (name conventionally stored
+    // with a leading "$", e.g. "$engine") instead of a SOBJ/OBJ2 submodel.
+    const specialPointMatch = pof.specialPoints.find((p) => normalizeSpecialPointName(p.name) === subsystem.name.trim().toLowerCase());
+    if (specialPointMatch) {
+      return {
+        contents: {
+          kind: "markdown",
+          value: `**$Subsystem: ${subsystem.name}** ✓\n\nFound in \`${ship.modelFile}\` as a special point (radius ${specialPointMatch.radius.toFixed(2)}) - normal for a non-geometric subsystem like engine/weapons/sensors/navigation/communication, which has no submodel of its own.`,
+        },
+      };
+    }
+
     const knownNames = pof.subobjects
       .map((s) => s.name)
       .filter((n): n is string => !!n)
       .slice(0, 20);
+    const knownSpecialPointNames = pof.specialPoints.map((p) => p.name).filter((n): n is string => !!n);
     return {
       contents: {
         kind: "markdown",
-        value: `**$Subsystem: ${subsystem.name}** ⚠️\n\nNo matching submodel name found in \`${ship.modelFile}\`.\n\nAvailable names: ${knownNames.length ? knownNames.map((n) => `\`${n}\``).join(", ") : "(none decoded)"}`,
+        value:
+          `**$Subsystem: ${subsystem.name}** ⚠️\n\nNo matching submodel or special point found in \`${ship.modelFile}\`.\n\n` +
+          `Available submodel names: ${knownNames.length ? knownNames.map((n) => `\`${n}\``).join(", ") : "(none decoded)"}` +
+          (knownSpecialPointNames.length ? `\n\nAvailable special points: ${knownSpecialPointNames.map((n) => `\`${n}\``).join(", ")}` : ""),
       },
     };
   }
@@ -2600,9 +2617,22 @@ interface PofGeometryForSubsystemResult {
   /** Number of detail (LOD) levels this model declares - lets the client decide whether to show a detail-level picker at all. */
   detailLevelCount: number;
   specialPoints: SpecialPointPayload[];
+  /** Index into `specialPoints` matching the requested `$Subsystem:` name (see normalizeSpecialPointName), or -1 if none matched. Mutually exclusive with `targetSubmodelIndex` - a subsystem is either a submodel or a special point, never both. */
+  targetSpecialPointIndex: number;
 }
 
-/** Builds the full per-submodel geometry payload for `pof`, highlighting whichever submodel's name matches `targetSubmodelName` (case-insensitive). Shared by both request handlers below - one keyed off a table document + line, the other off a raw POF file path. */
+/**
+ * A ships.tbl $Subsystem: name for a non-geometric subsystem (engine/weapons/
+ * communication/sensors/navigation) has no matching SOBJ/OBJ2 submodel - FSO instead
+ * resolves it against an SPCL "special point", whose name is conventionally stored
+ * with a leading "$" (e.g. "$engine"). Strips that so "engine" (the subsystem name)
+ * compares equal to "$engine" (the special point name).
+ */
+function normalizeSpecialPointName(name: string | null): string {
+  return (name ?? "").replace(/^\$/, "").trim().toLowerCase();
+}
+
+/** Builds the full per-submodel geometry payload for `pof`, highlighting whichever submodel (or, failing that, special point) name matches `targetSubmodelName` (case-insensitive). Shared by both request handlers below - one keyed off a table document + line, the other off a raw POF file path. */
 function buildPofGeometryResult(
   pof: PofModel,
   modelFileLabel: string,
@@ -2635,12 +2665,18 @@ function buildPofGeometryResult(
     radius: p.radius,
   }));
 
+  const targetSpecialPointIndex =
+    targetSubmodelName && targetSubmodelIndex === -1
+      ? pof.specialPoints.findIndex((p) => normalizeSpecialPointName(p.name) === targetSubmodelName.trim().toLowerCase())
+      : -1;
+
   return {
     modelFile: modelFileLabel,
     targetSubmodelIndex,
     submodels,
     detailLevelCount: pof.detailLevelRootSubmodels.length,
     specialPoints,
+    targetSpecialPointIndex,
   };
 }
 
