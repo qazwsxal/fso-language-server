@@ -41,6 +41,13 @@ export function activate(context: ExtensionContext): void {
   const clientOptions: LanguageClientOptions = {
     documentSelector: [
       { scheme: "file", language: "fso-table" },
+      // A .tbl/.tbm go-to-definition target that lives inside a .vp/.vpc archive opens
+      // read-only through vpContentProvider below, under the fso-tbl-vp: scheme rather
+      // than file: - without also matching that scheme here, such a document would
+      // never reach the server at all (no textDocument/didOpen sent for it), silently
+      // losing every LSP feature - diagnostics, hover, go-to-definition, and F12's POF
+      // viewer - not just the ones that happen to depend on filesystem access.
+      { scheme: VP_CONTENT_SCHEME, language: "fso-table" },
       // .fs2/.fc2 missions get ship-class/weapon-name cross-referencing against
       // ships.tbl/weapons.tbl (see server.ts's missionEntriesByUri) - not full mission
       // parsing, so unlike fso-table this carries no diagnostics of its own.
@@ -121,7 +128,10 @@ export function activate(context: ExtensionContext): void {
 
   /**
    * F12 on a ship's `$Subsystem:` line opens an explorable 3D view of that ship's POF
-   * model instead of navigating to a text location. This is deliberately NOT
+   * model instead of navigating to a text location; F12 on its `$POF file:` line does
+   * the same, opening the model with no particular submodel highlighted (see
+   * server.ts's getPofGeometryForSubsystem handler, which also matches that line). This
+   * is deliberately NOT
    * implemented as a `languages.registerDefinitionProvider` (as an earlier version of
    * this feature was) - VSCode calls a registered DefinitionProvider on every ctrl+hover
    * mouse move to decide whether to show the "click here to go to definition" underline,
@@ -182,7 +192,10 @@ export function activate(context: ExtensionContext): void {
   const subsystemHoverProvider: HoverProvider = {
     provideHover(document, position) {
       const text = document.lineAt(position.line).text;
-      const match = /^\s*\$Subsystem\s*:\s*/i.exec(text);
+      // Matches both `$Subsystem:` (opens the model highlighting that submodel) and
+      // `$POF file:` (opens the model with nothing highlighted) - server.ts's
+      // getPofGeometryForSubsystem handler resolves either line the same way.
+      const match = /^\s*\$(Subsystem|POF file)\s*:\s*/i.exec(text);
       if (!match) {
         return undefined;
       }

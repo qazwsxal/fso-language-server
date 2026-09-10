@@ -320,9 +320,9 @@ function readSpecialPoints(reader: BinaryReader, chunkEnd: number): PofSpecialPo
   for (let i = 0; i < count && reader.position < chunkEnd; i++) {
     const name = reader.readString();
     const properties = reader.readString();
-    reader.skipVector(); // position
-    reader.skip(4); // radius
-    points.push({ name, properties });
+    const position = reader.readVector();
+    const radius = reader.readFloat();
+    points.push({ name, properties, position, radius });
   }
   return points;
 }

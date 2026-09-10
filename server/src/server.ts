@@ -2578,6 +2578,20 @@ interface SubmodelGeometryPayload {
   isDebris: boolean;
 }
 
+/**
+ * A model-space marker with no polygon geometry of its own (POF SPCL chunk - e.g.
+ * $Engine/$Weapons/$Communication/$Sensors/$Navigation). Rendered client-side as a
+ * translucent sphere at `position` sized to `radius`, the same "lollipop" treatment
+ * pof-tools (github.com/Baezon/pof-tools, src/main.rs) uses for every point-type POF
+ * entity - confirmed there as a plain sphere with no direction glyph, unlike docking
+ * bays which additionally draw an arrow/cone along their normal.
+ */
+interface SpecialPointPayload {
+  name: string;
+  position: [number, number, number];
+  radius: number;
+}
+
 interface PofGeometryForSubsystemResult {
   modelFile: string;
   /** Index into `submodels` matching the requested `$Subsystem:` name (case-insensitive), or -1 if no submodel name matched. */
@@ -2585,6 +2599,7 @@ interface PofGeometryForSubsystemResult {
   submodels: SubmodelGeometryPayload[];
   /** Number of detail (LOD) levels this model declares - lets the client decide whether to show a detail-level picker at all. */
   detailLevelCount: number;
+  specialPoints: SpecialPointPayload[];
 }
 
 /** Builds the full per-submodel geometry payload for `pof`, highlighting whichever submodel's name matches `targetSubmodelName` (case-insensitive). Shared by both request handlers below - one keyed off a table document + line, the other off a raw POF file path. */
@@ -2614,7 +2629,19 @@ function buildPofGeometryResult(
     ? pof.subobjects.findIndex((s) => (s.name ?? "").toLowerCase() === targetSubmodelName.toLowerCase())
     : -1;
 
-  return { modelFile: modelFileLabel, targetSubmodelIndex, submodels, detailLevelCount: pof.detailLevelRootSubmodels.length };
+  const specialPoints: SpecialPointPayload[] = pof.specialPoints.map((p, i) => ({
+    name: p.name ?? `special_${i}`,
+    position: [p.position.x, p.position.y, p.position.z],
+    radius: p.radius,
+  }));
+
+  return {
+    modelFile: modelFileLabel,
+    targetSubmodelIndex,
+    submodels,
+    detailLevelCount: pof.detailLevelRootSubmodels.length,
+    specialPoints,
+  };
 }
 
 /**
@@ -2632,8 +2659,12 @@ connection.onRequest(
     const ships = shipEntriesByUri.get(params.uri) ?? [];
 
     for (const ship of ships) {
+      // `$POF file:` itself has no single submodel to highlight - buildPofGeometryResult
+      // treats a null target name as "none", same as a `$Subsystem:` name with no
+      // matching submodel, so the viewer just opens showing the whole model.
+      const isModelFileLine = ship.modelFileLine === params.line;
       const subsystem = ship.subsystems.find((s) => s.line === params.line);
-      if (!subsystem) {
+      if (!isModelFileLine && !subsystem) {
         continue;
       }
 
@@ -2642,7 +2673,7 @@ connection.onRequest(
         return null;
       }
 
-      return buildPofGeometryResult(pof, ship.modelFile, subsystem.name);
+      return buildPofGeometryResult(pof, ship.modelFile, subsystem ? subsystem.name : null);
     }
 
     return null;

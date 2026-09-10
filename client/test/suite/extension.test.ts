@@ -1024,6 +1024,30 @@ suite("FSO Table Language Server", () => {
     assert.ok(opened, "expected a new 'POF: fighter01.pof' webview tab to open after F12 on $Subsystem: turret01");
   });
 
+  test("F12 on a ship's $POF file: line opens the 3D POF viewer with no submodel highlighted", async () => {
+    // Regression coverage for the reported gap that F12 only worked on $Subsystem:
+    // lines, not on the $POF file: line itself - see the getPofGeometryForSubsystem
+    // handler in server.ts, which now also matches a ship's modelFileLine.
+    const uri = vscode.Uri.file(path.join(fixturesRoot, "data/tables/ships.tbl"));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const editor = await vscode.window.showTextDocument(doc);
+    await waitForDiagnostics(uri);
+
+    const lines = doc.getText().split(/\r\n|\r|\n/);
+    const pofFileLine = lines.findIndex((l) => /\$POF file\s*:/i.test(l));
+    assert.ok(pofFileLine >= 0, "fixture must contain a $POF file: line");
+
+    // Not asserting on a tab-count *increase*: the preceding test in this suite already
+    // opened (and left open) fighter01.pof's panel, which this reuses (see
+    // pofViewer.ts's fingerprint()-based dispatch) rather than add a new tab - same
+    // reasoning as the hover-link test below.
+    editor.selection = new vscode.Selection(pofFileLine, 5, pofFileLine, 5);
+    await vscode.commands.executeCommand("fsoLsp.revealDefinitionOrPofViewer");
+
+    const opened = await waitFor(() => countPofViewerTabs() > 0, 5000);
+    assert.ok(opened, "expected a POF viewer webview tab to be open after F12 on $POF file:");
+  });
+
   test("merely computing go-to-definition (as VSCode does on every ctrl+hover) does NOT open the 3D viewer", async () => {
     // Regression test: reported as "just tapping control seems to open the pof". Before
     // the F12-command fix above, the viewer was opened directly from inside a

@@ -14,11 +14,19 @@ export interface SubmodelGeometryPayload {
   isDebris: boolean;
 }
 
+/** Mirrors the server's SpecialPointPayload (server/src/server.ts). */
+export interface SpecialPointPayload {
+  name: string;
+  position: [number, number, number];
+  radius: number;
+}
+
 export interface PofGeometryForSubsystemResult {
   modelFile: string;
   targetSubmodelIndex: number;
   submodels: SubmodelGeometryPayload[];
   detailLevelCount: number;
+  specialPoints: SpecialPointPayload[];
 }
 
 /**
@@ -31,7 +39,7 @@ export interface PofGeometryForSubsystemResult {
  * on disk while the viewer stayed open - needs a real re-render).
  */
 function fingerprint(result: PofGeometryForSubsystemResult): string {
-  return result.submodels.map((s) => s.positions.length).join(",");
+  return result.submodels.map((s) => s.positions.length).join(",") + "|" + result.specialPoints.length;
 }
 
 interface OpenPanel {

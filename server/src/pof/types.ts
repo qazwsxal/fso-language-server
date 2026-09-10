@@ -30,6 +30,9 @@ export interface PofPath {
 export interface PofSpecialPoint {
   name: string | null;
   properties: string | null;
+  /** Model-space position (not parented to any submodel - unlike GLOW/EYE/turret points, SPCL entries have no `parentSubobject`). */
+  position: { x: number; y: number; z: number };
+  radius: number;
 }
 
 export interface PofGlowBank {

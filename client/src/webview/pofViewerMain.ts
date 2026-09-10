@@ -24,6 +24,13 @@ interface SubmodelPayload {
   isDebris: boolean;
 }
 
+/** A POF SPCL entry ($Engine/$Weapons/$Communication/$Sensors/$Navigation, ...) - a named point+radius with no polygon geometry of its own. */
+interface SpecialPointPayload {
+  name: string;
+  position: [number, number, number];
+  radius: number;
+}
+
 interface GeometryMessage {
   type: "geometry";
   modelFile: string;
@@ -31,6 +38,7 @@ interface GeometryMessage {
   submodels: SubmodelPayload[];
   /** Number of detail (LOD) levels this model declares - a detail-level picker is only shown when this is more than 1. */
   detailLevelCount: number;
+  specialPoints: SpecialPointPayload[];
 }
 
 /** Sent instead of a full GeometryMessage when re-triggering F12 on a different `$Subsystem:` of the SAME, already-rendered model - see pofViewer.ts's fingerprint() doc comment. */
@@ -48,6 +56,9 @@ declare function acquireVsCodeApi(): {
 const NORMAL_COLOR = 0x8899aa;
 const HIGHLIGHT_COLOR = 0xffcc33;
 const HIGHLIGHT_EMISSIVE = 0x664400;
+/** Translucent blue-purple sphere, matching pof-tools' (github.com/Baezon/pof-tools) treatment of every point-type POF entity - a plain sphere at the point's position/radius with no direction glyph (unlike a docking bay, which also draws an arrow along its normal - not modeled here since SPCL points don't carry one). */
+const SPECIAL_POINT_COLOR = 0x6666ff;
+const SPECIAL_POINT_OPACITY = 0.35;
 
 let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
@@ -247,6 +258,46 @@ function updateVisibility(): void {
   }
 }
 
+/**
+ * Builds one special point's marker: a translucent sphere at its position sized to its
+ * radius (pof-tools' "lollipop" treatment - see SPECIAL_POINT_COLOR's doc comment),
+ * plus a small always-facing-camera text label above it since, unlike pof-tools, this
+ * viewer has no side tree list a point's name could otherwise come from.
+ */
+function buildSpecialPointMarker(sp: SpecialPointPayload): THREE.Group {
+  const group = new THREE.Group();
+  group.position.set(sp.position[0], sp.position[1], sp.position[2]);
+
+  const geometry = new THREE.SphereGeometry(Math.max(sp.radius, 0.01), 16, 12);
+  const material = new THREE.MeshBasicMaterial({
+    color: SPECIAL_POINT_COLOR,
+    transparent: true,
+    opacity: SPECIAL_POINT_OPACITY,
+    depthWrite: false,
+  });
+  group.add(new THREE.Mesh(geometry, material));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.font = "bold 32px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+    ctx.fillStyle = "#cfd6ff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(sp.name, canvas.width / 2, canvas.height / 2);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
+  const labelScale = Math.max(sp.radius * 3, 1);
+  sprite.scale.set(labelScale, labelScale / 4, 1);
+  sprite.position.set(0, sp.radius + labelScale / 4, 0);
+  group.add(sprite);
+
+  return group;
+}
+
 function renderGeometry(msg: GeometryMessage): void {
   initSceneIfNeeded();
   if (!scene || !camera || !controls) {
@@ -259,8 +310,13 @@ function renderGeometry(msg: GeometryMessage): void {
       const mesh = obj as THREE.Mesh;
       if (mesh.geometry) mesh.geometry.dispose();
       const mat = (mesh as unknown as { material?: THREE.Material | THREE.Material[] }).material;
-      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-      else if (mat) mat.dispose();
+      const mats = Array.isArray(mat) ? mat : mat ? [mat] : [];
+      for (const m of mats) {
+        // Sprite labels (special-point name tags) carry a canvas texture on `.map` that
+        // Material.dispose() alone doesn't free.
+        (m as THREE.SpriteMaterial).map?.dispose();
+        m.dispose();
+      }
     });
   }
 
@@ -309,6 +365,14 @@ function renderGeometry(msg: GeometryMessage): void {
       }
     }
   });
+
+  for (const sp of msg.specialPoints) {
+    group.add(buildSpecialPointMarker(sp));
+    const dist = Math.hypot(sp.position[0], sp.position[1], sp.position[2]) + sp.radius;
+    if (dist > boundingRadius) {
+      boundingRadius = dist;
+    }
+  }
 
   scene.add(group);
   currentGroup = group;

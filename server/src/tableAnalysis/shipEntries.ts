@@ -37,6 +37,8 @@ export interface ShipEntryInfo {
   nameLine: number;
   /** From `$POF file:` (confirmed against ship.cpp - NOT `$Model File:`, which is a weapons.tbl-only field name). */
   modelFile: string | null;
+  /** Line of the `$POF file:` entry that set `modelFile`, or null if none was seen yet. Lets F12 on that line open the 3D viewer at the model's root instead of only working on `$Subsystem:` lines. */
+  modelFileLine: number | null;
   subsystems: ShipSubsystemRef[];
   /**
    * Ship-level only - `$Default PBanks:`/`$Default SBanks:` are also valid inside a
@@ -225,6 +227,7 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           name: stripHiddenNamePrefix(field.value.trim()),
           nameLine: field.line,
           modelFile: null,
+          modelFileLine: null,
           subsystems: [],
           defaultPrimaryBanks: null,
           defaultSecondaryBanks: null,
@@ -301,6 +304,7 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
 
       if (key === "pof file") {
         current.modelFile = field.value.trim();
+        current.modelFileLine = field.line;
       } else if (key === "default pbanks") {
         current.defaultPrimaryBanks = { line: field.line, weaponNames: splitBankList(field.value) };
       } else if (key === "default sbanks") {
