@@ -14,11 +14,21 @@ rather than guessed:
   even for files nobody has opened yet. Re-scans automatically when a table file changes
   on disk.
 
-- Fixed a broad false-positive source: a plain single-line field value that's entirely
-  one quoted string (e.g. `$Species: "Terran"`) kept its literal quote characters, so it
-  never matched anything in a cross-reference lookup (species_defs.tbl, texture indexes,
-  ...) even when the reference was perfectly valid. Found via `"wholeMod"` scanning a real
-  Blue Planet install.
+- Fixed a real false positive found by `"wholeMod"`-scanning a real Blue Planet install: a
+  ship/species/IFF/ship-type reference that only resolves via FSO's own compiled-in
+  fallback content (`species_defs.tbl`/`iff_defs.tbl`/`objecttypes.tbl` are all tables the
+  engine falls back to a built-in default for when a mod's whole dependency chain - often
+  true back to retail - never ships a real file) was incorrectly reported as unresolved,
+  since this extension had no equivalent fallback of its own. A plain `$Species: Terran`
+  with no overriding `-sdf.tbm` anywhere is exactly this case.
+- Fixed a plain single-line field value that's entirely one quoted string (e.g. `$Species:
+  "Terran"`) keeping its literal quote characters, so it never matched anything in a
+  cross-reference lookup even when the reference was perfectly valid.
+- Fixed a section whose real close token is `#End <Name>` (a prefix, e.g.
+  lighting_profiles.tbl's `#Profiles`/`#END PROFILES` - confirmed against a real Blue
+  Planet bp-ltp.tbm) being misread as an unclosed section followed by a bogus new one;
+  only the `<Name> End`/`<Name> Start` suffix style (`#Game Sounds Start`/`#Game Sounds
+  End`) was recognized before.
 - scripting.tbl/`*-sct.tbm` (embedded Lua) and strings.tbl/tstrings.tbl/`*-lcl.tbm`/
   `*-tlc.tbm` (a bare `<index> "string"` format, no `$`/`+` fields at all) are no longer
   validated at all - neither uses this extension's table grammar, so every diagnostic on

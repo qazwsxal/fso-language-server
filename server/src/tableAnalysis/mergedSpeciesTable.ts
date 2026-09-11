@@ -9,6 +9,7 @@ import {
   ResolvedFile,
 } from "../modResolution/resolver";
 import { SourceLocation } from "./sourceLocation";
+import { BUILTIN_SPECIES_DEFS_TBL } from "./builtinTableDefaults";
 
 export interface EffectiveSpeciesEntry {
   name: string;
@@ -29,6 +30,12 @@ export function buildEffectiveSpeciesTable(searchDirs: string[]): Map<string, Ef
   const baseResolved = resolveFile(searchDirs, "data/tables/species_defs.tbl");
   if (baseResolved) {
     applyLayer(result, baseResolved, /* isBase */ true);
+  } else {
+    // No real species_defs.tbl anywhere on the search path - confirmed a real scenario
+    // for a Knossos-managed install whose dependency chain bottoms out at retail (see
+    // builtinTableDefaults.ts): FSO itself falls back to a compiled-in default here
+    // rather than having no species at all.
+    applyBuiltinDefaultLayer(result, BUILTIN_SPECIES_DEFS_TBL);
   }
 
   for (const dir of [...searchDirs].reverse()) {
@@ -46,6 +53,26 @@ export function buildEffectiveSpeciesTable(searchDirs: string[]): Map<string, Ef
 /** Unique species names in their original (first-seen) casing - for completion display. */
 export function collectDisplaySpeciesNames(speciesTable: Map<string, EffectiveSpeciesEntry>): string[] {
   return Array.from(speciesTable.values()).map((e) => e.name);
+}
+
+/**
+ * Same effect as applyLayer() for the base layer, but for FSO's compiled-in default text
+ * (see builtinTableDefaults.ts) rather than a real file - so there's no ResolvedFile to
+ * attach a go-to-definition target to. Entries get `nameLocation: null`/empty
+ * `allLocations` (go-to-definition on a species that exists only via this synthetic
+ * layer correctly finds nowhere to jump), but DO exist in the map, which is what every
+ * cross-reference check actually needs.
+ */
+function applyBuiltinDefaultLayer(result: Map<string, EffectiveSpeciesEntry>, text: string): void {
+  const entries = extractSpeciesEntries(parseTable(text).sections);
+  for (const entry of entries) {
+    result.set(entry.name.toLowerCase(), {
+      name: entry.name,
+      nameLocation: null,
+      allLocations: [],
+      layerSources: ["(FSO built-in default)"],
+    });
+  }
 }
 
 function applyLayer(result: Map<string, EffectiveSpeciesEntry>, resolved: ResolvedFile, isBase: boolean): void {

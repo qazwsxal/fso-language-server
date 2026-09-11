@@ -116,7 +116,7 @@ export function parseTable(text: string): ParseResult {
     }
 
     if (line.startsWith("#")) {
-      if (currentSection && isCloseToken(line, currentCloseToken)) {
+      if (currentSection && isCloseToken(line, currentCloseToken, currentSection.name)) {
         currentSection.endLine = i;
         currentSection = null;
         currentCloseToken = null;
@@ -310,13 +310,26 @@ function closeTokenForSectionName(name: string): string {
   return "End";
 }
 
-/** Whether `line` (starting with '#') is the close token for a section - either the generic `#End` or that section's own table-specific close token. */
-function isCloseToken(line: string, closeToken: string | null): boolean {
+/**
+ * Whether `line` (starting with '#') is the close token for a section - the generic
+ * `#End`, that section's own suffix-style close token (`closeTokenForSectionName()`'s
+ * "X Start" -> "X End" pattern, e.g. `#Game Sounds Start`/`#Game Sounds End`), or a
+ * PREFIX-style `#End <Name>` close token (e.g. lighting_profiles.tbl's real grammar:
+ * `#Profiles` opens, `#END PROFILES` closes - confirmed against a real Blue Planet
+ * bp-ltp.tbm that ends this way, and against lighting_profiles.cpp's
+ * `optional_string_one_of(..., "#PROFILES", ..., "#END PROFILES")`; same for
+ * `#DEFAULT PROFILE`/`#END DEFAULT PROFILE`). Both conventions exist in real FSO tables,
+ * so both are accepted for every section rather than picking one per table.
+ */
+function isCloseToken(line: string, closeToken: string | null, sectionName: string): boolean {
   const lower = line.toLowerCase();
   if (lower === "#end") {
     return true;
   }
-  return closeToken !== null && lower === `#${closeToken}`.toLowerCase();
+  if (closeToken !== null && lower === `#${closeToken}`.toLowerCase()) {
+    return true;
+  }
+  return lower === `#end ${sectionName}`.toLowerCase();
 }
 
 /**

@@ -68,6 +68,15 @@ test("does not let an unrelated section's close token close a different table-sp
   assert.ok(result.diagnostics.some((d) => /was not closed with #End/.test(d.message)));
 });
 
+test("closes a PREFIX-style #End <Name> section (real lighting_profiles.tbl grammar: #Profiles / #END PROFILES)", () => {
+  const text = ["#Profiles", "$Profile: Default Profile", "$Exposure: 1.25", "#END PROFILES"].join("\n");
+  const result = parseTable(text);
+  assert.equal(result.sections.length, 1);
+  assert.equal(result.sections[0].name, "Profiles");
+  assert.equal(result.sections[0].endLine, 3);
+  assert.equal(result.diagnostics.length, 0);
+});
+
 test("scans a known multitext field (+Description:) forward to its $end_multi_text sentinel", () => {
   const text = [
     "#Ship Classes",

@@ -9,6 +9,7 @@ import {
   ResolvedFile,
 } from "../modResolution/resolver";
 import { SourceLocation } from "./sourceLocation";
+import { BUILTIN_IFF_DEFS_TBL } from "./builtinTableDefaults";
 
 export interface EffectiveIffEntry {
   name: string;
@@ -29,6 +30,10 @@ export function buildEffectiveIffTable(searchDirs: string[]): Map<string, Effect
   const baseResolved = resolveFile(searchDirs, "data/tables/iff_defs.tbl");
   if (baseResolved) {
     applyLayer(result, baseResolved, /* isBase */ true);
+  } else {
+    // No real iff_defs.tbl anywhere on the search path - see builtinTableDefaults.ts:
+    // FSO itself falls back to a compiled-in default here rather than having no IFFs.
+    applyBuiltinDefaultLayer(result, BUILTIN_IFF_DEFS_TBL);
   }
 
   for (const dir of [...searchDirs].reverse()) {
@@ -46,6 +51,19 @@ export function buildEffectiveIffTable(searchDirs: string[]): Map<string, Effect
 /** Unique IFF names in their original (first-seen) casing - for completion display. */
 export function collectDisplayIffNames(iffTable: Map<string, EffectiveIffEntry>): string[] {
   return Array.from(iffTable.values()).map((e) => e.name);
+}
+
+/** Same effect as applyLayer() for the base layer, but for FSO's compiled-in default text (see mergedSpeciesTable.ts's applyBuiltinDefaultLayer() for the full rationale). */
+function applyBuiltinDefaultLayer(result: Map<string, EffectiveIffEntry>, text: string): void {
+  const entries = extractIffEntries(parseTable(text).sections);
+  for (const entry of entries) {
+    result.set(entry.name.toLowerCase(), {
+      name: entry.name,
+      nameLocation: null,
+      allLocations: [],
+      layerSources: ["(FSO built-in default)"],
+    });
+  }
 }
 
 function applyLayer(result: Map<string, EffectiveIffEntry>, resolved: ResolvedFile, isBase: boolean): void {

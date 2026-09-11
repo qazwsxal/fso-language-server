@@ -9,6 +9,7 @@ import {
   ResolvedFile,
 } from "../modResolution/resolver";
 import { SourceLocation } from "./sourceLocation";
+import { BUILTIN_OBJECTTYPES_TBL } from "./builtinTableDefaults";
 
 export interface EffectiveObjectTypeEntry {
   kind: ObjectTypeSectionKind;
@@ -37,8 +38,10 @@ export function collectDisplayNamesForKind(
  * same base-.tbl-plus-.tbm-layers merge order, `-obt.tbm` suffix (confirmed in
  * objectTypes.ts schema), entries keyed by `kind::name` since the three sections are
  * independent namespaces. objecttypes.tbl is one of FSO's hardcoded-fallback tables (see
- * fso-table-format project memory) - a missing base file on disk just means no base
- * layer applies here, mirroring the real engine's built-in-default fallback.
+ * builtinTableDefaults.ts) - a missing base file on disk means the compiled-in default's
+ * `#Ship types` entries apply instead, mirroring the real engine's own fallback (a
+ * previous version of this comment had this backwards: a missing file does NOT mean "no
+ * base layer", it means the SAME built-in layer the real engine would use).
  */
 export function buildEffectiveObjectTypesTable(searchDirs: string[]): Map<string, EffectiveObjectTypeEntry> {
   const result = new Map<string, EffectiveObjectTypeEntry>();
@@ -46,6 +49,8 @@ export function buildEffectiveObjectTypesTable(searchDirs: string[]): Map<string
   const baseResolved = resolveFile(searchDirs, "data/tables/objecttypes.tbl");
   if (baseResolved) {
     applyLayer(result, baseResolved, /* isBase */ true);
+  } else {
+    applyBuiltinDefaultLayer(result, BUILTIN_OBJECTTYPES_TBL);
   }
 
   for (const dir of [...searchDirs].reverse()) {
@@ -58,6 +63,20 @@ export function buildEffectiveObjectTypesTable(searchDirs: string[]): Map<string
   }
 
   return result;
+}
+
+/** Same effect as applyLayer() for the base layer, but for FSO's compiled-in default text (see mergedSpeciesTable.ts's applyBuiltinDefaultLayer() for the full rationale). */
+function applyBuiltinDefaultLayer(result: Map<string, EffectiveObjectTypeEntry>, text: string): void {
+  const entries = extractObjectTypeEntries(parseTable(text).sections);
+  for (const entry of entries) {
+    result.set(mapKey(entry.kind, entry.name), {
+      kind: entry.kind,
+      name: entry.name,
+      nameLocation: null,
+      allLocations: [],
+      layerSources: ["(FSO built-in default)"],
+    });
+  }
 }
 
 function applyLayer(result: Map<string, EffectiveObjectTypeEntry>, resolved: ResolvedFile, isBase: boolean): void {
