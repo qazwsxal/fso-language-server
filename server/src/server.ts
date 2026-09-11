@@ -127,16 +127,22 @@ function isMissionFile(uri: string): boolean {
 }
 
 /**
- * Matches ssm.tbl/*-ssm.tbm - confirmed against hudartillery.cpp's `parse_ssm()` (see
- * ssmEntries.ts) to be genuinely, unconditionally headerless: unlike rank.tbl (which
- * OPTIONALLY skips a header, so a real rank.tbl usually has one and the loose-section
- * warning stays meaningful there), ssm.tbl has no header-handling code at all, so every
- * real ssm.tbl triggers parser.ts's "outside of any #Section block" warning on its very
- * first `$SSM:` line - a guaranteed false positive, not an occasional one, so it's
- * suppressed outright for this one file type below.
+ * Matches tables whose real parser makes a `#Section` header entirely optional (or, for
+ * ssm.tbl, never checks for one at all) - unlike, say, ships.tbl's hard-`required_string`
+ * `#Ship Classes`, so parser.ts's "outside of any #Section block" warning is either a
+ * guaranteed or a routinely-expected false positive for these, not a real mistake to flag:
+ * - ssm.tbl/*-ssm.tbm (`code/hud/hudartillery.cpp`'s `parse_ssm()`, see ssmEntries.ts) -
+ *   genuinely, unconditionally headerless. No header-handling code exists for it at all.
+ * - stars.tbl/*-str.tbm (`code/starfield/starfield.cpp`'s `parse_startbl()`) - every
+ *   section header (`#Stars`, `#Motion Debris`, ...) is read via a bare `optional_string()`
+ *   with no fallback check, so a modular `-str.tbm` patch (confirmed against a real Blue
+ *   Planet bp2-str.tbm - sun/flare overrides only) routinely omits them entirely and
+ *   starts straight in on `$Sun:` entries. This table isn't otherwise supported by this
+ *   project (no dedicated extractor/cross-references) - this only silences the one
+ *   structural false positive so editing one isn't drowned in noise.
  */
-function isSsmTableFile(uri: string): boolean {
-  return /(^|[\\/])ssm\.tbl$|-ssm\.tbm$/i.test(uri);
+function isOptionallyHeaderlessTableFile(uri: string): boolean {
+  return /(^|[\\/])(ssm|stars)\.tbl$|-(ssm|str)\.tbm$/i.test(uri);
 }
 
 /**
@@ -891,7 +897,7 @@ function validateAndPublish(document: TextDocument): void {
 
   const result = parseTable(document.getText());
   const isMission = isMissionFile(document.uri);
-  const isSsmTable = isSsmTableFile(document.uri);
+  const isOptionallyHeaderless = isOptionallyHeaderlessTableFile(document.uri);
   parsedByUri.set(document.uri, result);
   shipEntriesByUri.set(document.uri, extractShipEntries(result.sections));
   weaponEntriesByUri.set(document.uri, extractWeaponEntries(result.sections));
@@ -939,7 +945,7 @@ function validateAndPublish(document: TextDocument): void {
     // validate mission structure, so none of its own diagnostics apply there.
     ...(isMission
       ? []
-      : isSsmTable
+      : isOptionallyHeaderless
         ? result.diagnostics.filter((d) => !d.message.endsWith("appears outside of any #Section block"))
         : result.diagnostics),
     ...schemaDiagnostics,

@@ -23,13 +23,13 @@ rather than guessed:
   `*-tlc.tbm` (a bare `<index> "string"` format, no `$`/`+` fields at all) are no longer
   validated at all - neither uses this extension's table grammar, so every diagnostic on
   them was noise.
-- Fixed two "outside of any #Section block" false positives:
+- Fixed "outside of any #Section block" false positives:
   - A table file starting with a UTF-8 byte-order mark (common from Windows editors) had
     its own `#Section` header silently misread as ordinary content, so every field in the
     file was incorrectly flagged.
-  - A genuinely headerless ssm.tbl/*-ssm.tbm (confirmed against the real engine - unlike
-    rank.tbl, it never has a `#Section` header at all) no longer gets that same warning on
-    every entry.
+  - ssm.tbl/`*-ssm.tbm` (never has a `#Section` header at all) and stars.tbl/`*-str.tbm`
+    (every header is optional, so a modular patch routinely omits them - confirmed against
+    a real Blue Planet bp2-str.tbm) no longer get that same warning on every entry.
 - The 3D POF model viewer (F12 and a hover "Open 3D view" link) now also opens from:
   - A weapon's `$Model file:`, `$Tech Model:`, and `$External Model File:` lines.
   - A ship's `$Cockpit POF file:`, `$POF file Techroom:`, `$POF target file:`, and
