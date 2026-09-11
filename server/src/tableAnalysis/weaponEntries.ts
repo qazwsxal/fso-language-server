@@ -57,6 +57,12 @@ export interface WeaponEntryInfo {
    */
   armorType: string | null;
   armorTypeLine: number | null;
+  /** From `$Muzzleflash:` (confirmed against weapons.cpp: `mflash_lookup()`) - references an mflash.tbl entry (the legacy table-driven muzzle flash system - distinct from the newer, table-free `$Muzzle Effect:` particle-effect field). */
+  muzzleflash: string | null;
+  muzzleflashLine: number | null;
+  /** From `$SSM:` (confirmed against weapons.cpp/hudartillery.cpp: resolved either as a bare 0-based `Ssm_info` index, or - if that fails - as a name looked up via `ssm_info_lookup()`) - references an ssm.tbl entry. */
+  ssmClass: string | null;
+  ssmClassLine: number | null;
   /** Bitmap/animation-referencing fields, confirmed against weapons.cpp's field list and a real weapons.tbl. */
   textureRefs: WeaponTextureRef[];
   /**
@@ -140,6 +146,8 @@ const HANDLED_TOP_LEVEL_KEYS = new Set([
   "external model file",
   "damage type",
   "armor type",
+  "muzzleflash",
+  "ssm",
   "substitute",
   ...DOLLAR_TEXTURE_FIELDS,
   ...SOUND_FIELDS,
@@ -203,6 +211,10 @@ export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[
           damageTypeLine: null,
           armorType: null,
           armorTypeLine: null,
+          muzzleflash: null,
+          muzzleflashLine: null,
+          ssmClass: null,
+          ssmClassLine: null,
           textureRefs: [],
           soundRefs: [],
           miscFieldRefs: [],
@@ -266,6 +278,12 @@ export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[
       } else if (key === "armor type") {
         current.armorType = field.value.trim();
         current.armorTypeLine = field.line;
+      } else if (key === "muzzleflash" && field.value.trim()) {
+        current.muzzleflash = field.value.trim();
+        current.muzzleflashLine = field.line;
+      } else if (key === "ssm" && field.value.trim()) {
+        current.ssmClass = field.value.trim();
+        current.ssmClassLine = field.line;
       } else if (key === "substitute" && field.value.trim()) {
         // Repeatable ("while") - see WeaponSubstituteRef. field.value is just the
         // substitute weapon name; +period:/+offset:/+index: are separate following

@@ -63,6 +63,9 @@ import { extractMedalEntries } from "./tableAnalysis/medalsEntries";
 import { buildEffectiveMedalsTable, EffectiveMedalEntry } from "./tableAnalysis/mergedMedalsTable";
 import { extractRankEntries } from "./tableAnalysis/rankEntries";
 import { buildEffectiveRankTable, EffectiveRankEntry } from "./tableAnalysis/mergedRankTable";
+import { buildEffectiveTeamColorTable, EffectiveTeamColorEntry } from "./tableAnalysis/mergedColorsTable";
+import { buildEffectiveMflashTable, EffectiveMflashEntry } from "./tableAnalysis/mergedMflashTable";
+import { buildEffectiveSsmTable, resolveSsmReference, EffectiveSsmEntry } from "./tableAnalysis/mergedSsmTable";
 import { extractAiProfileEntries } from "./tableAnalysis/aiProfilesEntries";
 import { buildEffectiveAiProfilesTable, EffectiveAiProfileEntry } from "./tableAnalysis/mergedAiProfilesTable";
 import { extractSoundEntries } from "./tableAnalysis/soundsEntries";
@@ -374,6 +377,16 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       }
     }
 
+    if (ship.defaultTeamLine === line && ship.defaultTeam && ship.defaultTeam.toLowerCase() !== "none") {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveTeamColorTable(searchDirs).get(ship.defaultTeam.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
     if (ship.useTemplateLine === line && ship.useTemplate) {
       try {
         const searchDirs = buildSearchPath(fileURLToPath(documentUri));
@@ -486,6 +499,26 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       try {
         const searchDirs = buildSearchPath(fileURLToPath(documentUri));
         const entry = getEffectiveArmorTable(searchDirs).get(weapon.armorType.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    if (weapon.muzzleflashLine === line && weapon.muzzleflash) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveMflashTable(searchDirs).get(weapon.muzzleflash.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    if (weapon.ssmClassLine === line && weapon.ssmClass) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = resolveSsmReference(getEffectiveSsmTable(searchDirs), weapon.ssmClass);
         return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
       } catch {
         return null;
@@ -620,6 +653,9 @@ connection.onDidChangeWatchedFiles(() => {
   effectiveAiProfilesTableCache.clear();
   effectiveSoundsTableCache.clear();
   effectiveObjectTypesTableCache.clear();
+  effectiveTeamColorTableCache.clear();
+  effectiveMflashTableCache.clear();
+  effectiveSsmTableCache.clear();
   textureIndexCache.clear();
   textureNamesSortedCache.clear();
   pofFileIndexCache.clear();
@@ -652,10 +688,13 @@ function validateAndPublish(document: TextDocument): void {
   const countermeasureTypeDiagnostics = computeCountermeasureTypeDiagnostics(document.uri, ships);
   const shipTemplateDiagnostics = computeShipTemplateDiagnostics(document.uri, ships);
   const shipIffColorDiagnostics = computeShipIffColorDiagnostics(document.uri, ships);
+  const defaultTeamDiagnostics = computeDefaultTeamDiagnostics(document.uri, ships);
   const iffDiagnostics = computeIffDiagnostics(document.uri, species);
   const damageTypeDiagnostics = computeDamageTypeDiagnostics(document.uri, weapons);
   const weaponArmorTypeDiagnostics = computeWeaponArmorTypeDiagnostics(document.uri, weapons);
   const conditionalImpactArmorDiagnostics = computeConditionalImpactArmorDiagnostics(document.uri, weapons);
+  const muzzleflashDiagnostics = computeMuzzleflashDiagnostics(document.uri, weapons);
+  const ssmDiagnostics = computeSsmDiagnostics(document.uri, weapons);
   const weaponSubstituteDiagnostics = computeWeaponSubstituteDiagnostics(document.uri, weapons);
   const weaponNameListDiagnostics = computeWeaponNameListDiagnostics(document.uri, weapons);
   const textureDiagnostics = computeTextureDiagnostics(document.uri, ships, weapons);
@@ -684,10 +723,13 @@ function validateAndPublish(document: TextDocument): void {
     ...countermeasureTypeDiagnostics,
     ...shipTemplateDiagnostics,
     ...shipIffColorDiagnostics,
+    ...defaultTeamDiagnostics,
     ...iffDiagnostics,
     ...damageTypeDiagnostics,
     ...weaponArmorTypeDiagnostics,
     ...conditionalImpactArmorDiagnostics,
+    ...muzzleflashDiagnostics,
+    ...ssmDiagnostics,
     ...weaponSubstituteDiagnostics,
     ...weaponNameListDiagnostics,
     ...textureDiagnostics,
@@ -1188,6 +1230,26 @@ function getEffectiveObjectTypesTable(searchDirs: string[]): Map<string, Effecti
 }
 
 /**
+ * Caches for colors.tbl/mflash.tbl/ssm.tbl - unlike the group above, each of these IS a
+ * confirmed cross-reference target: a ship's `$Default Team:` (colors.tbl), a weapon's
+ * `$Muzzleflash:` (mflash.tbl), and a weapon's `$SSM:` (ssm.tbl) - see
+ * shipEntries.ts/weaponEntries.ts.
+ */
+const effectiveTeamColorTableCache = new Map<string, Map<string, EffectiveTeamColorEntry>>();
+const effectiveMflashTableCache = new Map<string, Map<string, EffectiveMflashEntry>>();
+const effectiveSsmTableCache = new Map<string, Map<string, EffectiveSsmEntry>>();
+
+function getEffectiveTeamColorTable(searchDirs: string[]): Map<string, EffectiveTeamColorEntry> {
+  return cachedTable(effectiveTeamColorTableCache, searchDirs, buildEffectiveTeamColorTable);
+}
+function getEffectiveMflashTable(searchDirs: string[]): Map<string, EffectiveMflashEntry> {
+  return cachedTable(effectiveMflashTableCache, searchDirs, buildEffectiveMflashTable);
+}
+function getEffectiveSsmTable(searchDirs: string[]): Map<string, EffectiveSsmEntry> {
+  return cachedTable(effectiveSsmTableCache, searchDirs, buildEffectiveSsmTable);
+}
+
+/**
  * Cache of the texture/animation basename index (see textureIndex.ts), keyed by the
  * joined search-path directory list - same cache-key convention as the merged-table
  * caches above.
@@ -1390,6 +1452,41 @@ function computeShipTemplateDiagnostics(documentUri: string, ships: ShipEntryInf
 }
 
 /**
+ * Cross-table check: a ship's `$Default Team:` should name a colors.tbl `$Team Name:`
+ * entry, or be the literal `"none"` sentinel (confirmed against ship.cpp: `Team_Colors.
+ * find()`, case-insensitive per the engine's own `stricmp()` check).
+ */
+function computeDefaultTeamDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let colorsTable: Map<string, EffectiveTeamColorEntry> | null = null;
+
+  for (const ship of ships) {
+    if (!ship.defaultTeam || ship.defaultTeamLine === null || ship.defaultTeam.toLowerCase() === "none") {
+      continue;
+    }
+    try {
+      if (!colorsTable) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        colorsTable = getEffectiveTeamColorTable(searchDirs);
+      }
+      if (!colorsTable.has(ship.defaultTeam.toLowerCase())) {
+        diagnostics.push({
+          line: ship.defaultTeamLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$Default Team: "${ship.defaultTeam}" was not found in colors.tbl (checked across the active mod's search path)`,
+          severity: "warning",
+        });
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
  * Cross-table check: every `+Seen By:`/`+When IFF Is:` inside a `$Ship IFF Colors:`/
  * `$Ship IFF Colours:` block should name an iff_defs.tbl `$IFF Name:` entry (confirmed
  * against ship.cpp: both resolved via `iff_lookup()`).
@@ -1525,6 +1622,71 @@ function computeConditionalImpactArmorDiagnostics(documentUri: string, weapons: 
       } catch {
         // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
       }
+    }
+  }
+
+  return diagnostics;
+}
+
+/** Cross-table check: a weapon's `$Muzzleflash:` should name an mflash.tbl entry. */
+function computeMuzzleflashDiagnostics(documentUri: string, weapons: WeaponEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let mflashTable: Map<string, EffectiveMflashEntry> | null = null;
+
+  for (const weapon of weapons) {
+    if (!weapon.muzzleflash || weapon.muzzleflashLine === null) {
+      continue;
+    }
+    try {
+      if (!mflashTable) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        mflashTable = getEffectiveMflashTable(searchDirs);
+      }
+      if (!mflashTable.has(weapon.muzzleflash.toLowerCase())) {
+        diagnostics.push({
+          line: weapon.muzzleflashLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$Muzzleflash: "${weapon.muzzleflash}" was not found in mflash.tbl (checked across the active mod's search path)`,
+          severity: "warning",
+        });
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Cross-table check: a weapon's `$SSM:` should resolve against ssm.tbl - either as a
+ * bare 0-based index, or as a name (see resolveSsmReference()'s doc comment).
+ */
+function computeSsmDiagnostics(documentUri: string, weapons: WeaponEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let ssmTable: Map<string, EffectiveSsmEntry> | null = null;
+
+  for (const weapon of weapons) {
+    if (!weapon.ssmClass || weapon.ssmClassLine === null) {
+      continue;
+    }
+    try {
+      if (!ssmTable) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        ssmTable = getEffectiveSsmTable(searchDirs);
+      }
+      if (!resolveSsmReference(ssmTable, weapon.ssmClass)) {
+        diagnostics.push({
+          line: weapon.ssmClassLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$SSM: "${weapon.ssmClass}" was not found in ssm.tbl (checked across the active mod's search path)`,
+          severity: "warning",
+        });
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
     }
   }
 
@@ -2894,6 +3056,41 @@ connection.onHover((params): Hover | null => {
       }
     }
 
+    if (weapon.muzzleflashLine === params.position.line && weapon.muzzleflash) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry = getEffectiveMflashTable(searchDirs).get(weapon.muzzleflash.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**$Muzzleflash: ${weapon.muzzleflash}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**$Muzzleflash: ${weapon.muzzleflash}** ⚠️\n\nNot found in mflash.tbl along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    if (weapon.ssmClassLine === params.position.line && weapon.ssmClass) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const ssmTable = getEffectiveSsmTable(searchDirs);
+        const entry = resolveSsmReference(ssmTable, weapon.ssmClass);
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**$SSM: ${weapon.ssmClass}** ✓ (${entry.name})\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**$SSM: ${weapon.ssmClass}** ⚠️\n\nNot found in ssm.tbl along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
     const substituteRef = weapon.substituteRefs.find((r) => r.line === params.position.line);
     if (substituteRef) {
       try {
@@ -3190,6 +3387,26 @@ connection.onHover((params): Hover | null => {
             value: entry?.nameLocation
               ? `**$Countermeasure type: ${ship.countermeasureType}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
               : `**$Countermeasure type: ${ship.countermeasureType}** ⚠️\n\nNot found as a weapons.tbl weapon along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    if (ship.defaultTeamLine === params.position.line && ship.defaultTeam) {
+      const isNone = ship.defaultTeam.toLowerCase() === "none";
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry = isNone ? null : getEffectiveTeamColorTable(searchDirs).get(ship.defaultTeam.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: isNone
+              ? `**$Default Team: none**\n\nNo team colors.`
+              : entry?.nameLocation
+                ? `**$Default Team: ${ship.defaultTeam}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+                : `**$Default Team: ${ship.defaultTeam}** ⚠️\n\nNot found in colors.tbl along the active mod's search path.`,
           },
         };
       } catch {

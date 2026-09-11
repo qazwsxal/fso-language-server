@@ -25,4 +25,8 @@ Initial packaging for the VS Code Marketplace. Highlights:
   Is:`, and ship-template support - a ship class's `+Use Template:`/`+Use Ship as
   Template:` now resolve against `#Ship Templates` entries (`$Template:`) and other ship
   classes respectively.
+- Added support for three more tables, each backing a cross-reference above: `colors.tbl`
+  (a ship's `$Default Team:`), `mflash.tbl` (a weapon's `$Muzzleflash:`), and `ssm.tbl` (a
+  weapon's `$SSM:`, by name or numeric index) - each gets Go to Definition, hover, and
+  unresolved-reference diagnostics.
  

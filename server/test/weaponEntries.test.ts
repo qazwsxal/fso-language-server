@@ -127,6 +127,21 @@ test("extracts $Proximity Radius:'s +Proximity IFF:/+Proximity Class: as kinded 
   );
 });
 
+test("extracts $Muzzleflash: and $SSM:", () => {
+  const text = [
+    "#Secondary Weapons",
+    "$Name: Trebuchet",
+    "$Muzzleflash: laser_flash",
+    "$SSM: GTVA Artillery Strike",
+    "#End",
+  ].join("\n");
+  const [weapon] = extractWeaponEntries(parseTable(text).sections);
+  assert.equal(weapon.muzzleflash, "laser_flash");
+  assert.equal(weapon.muzzleflashLine, 2);
+  assert.equal(weapon.ssmClass, "GTVA Artillery Strike");
+  assert.equal(weapon.ssmClassLine, 3);
+});
+
 test("extracts +Armor Type: nested inside a repeatable $Conditional Impact: block, separately from the top-level $Armor Type:", () => {
   const text = [
     "#Secondary Weapons",

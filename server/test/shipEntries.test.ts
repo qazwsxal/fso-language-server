@@ -174,6 +174,13 @@ test("extractShipTemplateEntries: reads #Ship Templates entries keyed by $Templa
   assert.equal(templates[1].useTemplateLine, 3);
 });
 
+test("extracts $Default Team:", () => {
+  const text = ["#Ship Classes", "$Name: GTF Ulysses", "$Default Team: Hostile", "#End"].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.equal(ship.defaultTeam, "Hostile");
+  assert.equal(ship.defaultTeamLine, 2);
+});
+
 test("extracts $Ship IFF Colors:'s +Seen By:/+When IFF Is: as two iff_defs.tbl name refs per occurrence", () => {
   const text = [
     "#Ship Classes",

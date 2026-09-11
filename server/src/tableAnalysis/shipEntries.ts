@@ -136,6 +136,9 @@ export interface ShipEntryInfo {
   /** From `$Countermeasure type:` (confirmed against ship.cpp: `weapon_info_lookup()`) - references a weapons.tbl weapon name. Non-beam weapons only; the engine warns and ignores a beam given here. Ship-level only. */
   countermeasureType: string | null;
   countermeasureTypeLine: number | null;
+  /** From `$Default Team:` (confirmed against ship.cpp: `Team_Colors.find()`) - references a colors.tbl `$Team Name:` entry, or the literal sentinel `"none"` (meaning no team colors). Ship-level only. */
+  defaultTeam: string | null;
+  defaultTeamLine: number | null;
   /** From `+Use Template:` (confirmed against ship.cpp: `ship_template_lookup()`) - references a `$Template:` entry's name in this same file's `#Ship Templates` section (or a `.tbm` layer's). Only meaningful right after `$Name:`/`+nocreate`/`+remove`, before any other field - `parse_ship()`'s clone-then-continue-parsing prelude. */
   useTemplate: string | null;
   useTemplateLine: number | null;
@@ -243,6 +246,7 @@ const HANDLED_TOP_LEVEL_KEYS = new Set([
   "pof file techroom",
   "pof target file",
   "countermeasure type",
+  "default team",
   "default pbanks",
   "default sbanks",
   "armor type",
@@ -304,6 +308,8 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           miscFieldRefs: [],
           countermeasureType: null,
           countermeasureTypeLine: null,
+          defaultTeam: null,
+          defaultTeamLine: null,
           useTemplate: null,
           useTemplateLine: null,
           useShipAsTemplate: null,
@@ -391,6 +397,9 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
       } else if (key === "countermeasure type") {
         current.countermeasureType = field.value.trim();
         current.countermeasureTypeLine = field.line;
+      } else if (key === "default team") {
+        current.defaultTeam = field.value.trim();
+        current.defaultTeamLine = field.line;
       } else if (key === "default pbanks") {
         current.defaultPrimaryBanks = { line: field.line, weaponNames: splitBankList(field.value) };
       } else if (key === "default sbanks") {
