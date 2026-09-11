@@ -589,6 +589,7 @@ function validateAndPublish(document: TextDocument): void {
   const species = speciesEntriesByUri.get(document.uri) ?? [];
   const bankCountDiagnostics = computeBankCountDiagnostics(document.uri, ships);
   const bankWeaponNameDiagnostics = computeBankWeaponNameDiagnostics(document.uri, ships);
+  const shipModelDiagnostics = computeShipModelDiagnostics(document.uri, ships);
   const weaponModelDiagnostics = computeWeaponModelDiagnostics(document.uri, weapons);
   const armorTypeDiagnostics = computeArmorTypeDiagnostics(document.uri, ships);
   const speciesDiagnostics = computeSpeciesDiagnostics(document.uri, ships);
@@ -613,6 +614,7 @@ function validateAndPublish(document: TextDocument): void {
     ...schemaDiagnostics,
     ...bankCountDiagnostics,
     ...bankWeaponNameDiagnostics,
+    ...shipModelDiagnostics,
     ...weaponModelDiagnostics,
     ...armorTypeDiagnostics,
     ...speciesDiagnostics,
@@ -695,6 +697,157 @@ function resolvePofLocationForShipEntry(documentUri: string, ship: ShipEntryInfo
   } catch {
     return null;
   }
+}
+
+/** Same resolution as resolvePofForShipEntry(), but for `$Cockpit POF file:` - the 3D cockpit interior model. */
+function resolvePofForShipCockpitModel(documentUri: string, ship: ShipEntryInfo): PofModel | null {
+  try {
+    const filePath = fileURLToPath(documentUri);
+    const searchDirs = buildSearchPath(filePath);
+    const effective = getEffectiveShipTable(searchDirs).get(ship.name.toLowerCase());
+    const cockpitModelFile = effective?.cockpitModelFile ?? ship.cockpitModelFile;
+    if (!cockpitModelFile || isUnsetFileValue(cockpitModelFile)) {
+      return null;
+    }
+    const resolved = resolveModelFile(searchDirs, cockpitModelFile);
+    if (!resolved) {
+      return null;
+    }
+    return loadPofCached(resolved);
+  } catch {
+    return null;
+  }
+}
+
+/** Same resolution as resolvePofForShipEntry(), but for `$POF file Techroom:` - the separate POF shown in the tech room / ship database. */
+function resolvePofForShipTechModel(documentUri: string, ship: ShipEntryInfo): PofModel | null {
+  try {
+    const filePath = fileURLToPath(documentUri);
+    const searchDirs = buildSearchPath(filePath);
+    const effective = getEffectiveShipTable(searchDirs).get(ship.name.toLowerCase());
+    const techModel = effective?.techModel ?? ship.techModel;
+    if (!techModel || isUnsetFileValue(techModel)) {
+      return null;
+    }
+    const resolved = resolveModelFile(searchDirs, techModel);
+    if (!resolved) {
+      return null;
+    }
+    return loadPofCached(resolved);
+  } catch {
+    return null;
+  }
+}
+
+/** Same resolution as resolvePofForShipEntry(), but for `$POF target file:` - a low-detail model substituted in the HUD target monitor. */
+function resolvePofForShipHudTargetModel(documentUri: string, ship: ShipEntryInfo): PofModel | null {
+  try {
+    const filePath = fileURLToPath(documentUri);
+    const searchDirs = buildSearchPath(filePath);
+    const effective = getEffectiveShipTable(searchDirs).get(ship.name.toLowerCase());
+    const hudTargetModelFile = effective?.hudTargetModelFile ?? ship.hudTargetModelFile;
+    if (!hudTargetModelFile || isUnsetFileValue(hudTargetModelFile)) {
+      return null;
+    }
+    const resolved = resolveModelFile(searchDirs, hudTargetModelFile);
+    if (!resolved) {
+      return null;
+    }
+    return loadPofCached(resolved);
+  } catch {
+    return null;
+  }
+}
+
+/** Same resolution as resolvePofForShipEntry(), but for `+Generic Debris POF file:` - the debris-chunk model used when this ship explodes. */
+function resolvePofForShipGenericDebrisModel(documentUri: string, ship: ShipEntryInfo): PofModel | null {
+  try {
+    const filePath = fileURLToPath(documentUri);
+    const searchDirs = buildSearchPath(filePath);
+    const effective = getEffectiveShipTable(searchDirs).get(ship.name.toLowerCase());
+    const genericDebrisModelFile = effective?.genericDebrisModelFile ?? ship.genericDebrisModelFile;
+    if (!genericDebrisModelFile || isUnsetFileValue(genericDebrisModelFile)) {
+      return null;
+    }
+    const resolved = resolveModelFile(searchDirs, genericDebrisModelFile);
+    if (!resolved) {
+      return null;
+    }
+    return loadPofCached(resolved);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Flags a ship's `$Cockpit POF file:`/`$POF file Techroom:`/`$POF target file:`/
+ * `+Generic Debris POF file:` when it can't be resolved anywhere along the active mod's
+ * search path - mirrors computeWeaponModelDiagnostics() for weapons.tbl's equivalent
+ * fields. `$POF file:` itself is deliberately NOT checked here - it predates this
+ * function and is instead surfaced via the $Subsystem: hover/3D-viewer error paths.
+ */
+function computeShipModelDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+
+  for (const ship of ships) {
+    if (ship.cockpitModelFile && ship.cockpitModelFileLine !== null && !isUnsetFileValue(ship.cockpitModelFile)) {
+      if (!resolvePofForShipCockpitModel(documentUri, ship)) {
+        diagnostics.push({
+          line: ship.cockpitModelFileLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$Cockpit POF file: "${ship.cockpitModelFile}" could not be resolved along the active mod's search path`,
+          severity: "warning",
+        });
+      }
+    }
+
+    if (ship.techModel && ship.techModelLine !== null && !isUnsetFileValue(ship.techModel)) {
+      if (!resolvePofForShipTechModel(documentUri, ship)) {
+        diagnostics.push({
+          line: ship.techModelLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$POF file Techroom: "${ship.techModel}" could not be resolved along the active mod's search path`,
+          severity: "warning",
+        });
+      }
+    }
+
+    if (
+      ship.hudTargetModelFile &&
+      ship.hudTargetModelFileLine !== null &&
+      !isUnsetFileValue(ship.hudTargetModelFile)
+    ) {
+      if (!resolvePofForShipHudTargetModel(documentUri, ship)) {
+        diagnostics.push({
+          line: ship.hudTargetModelFileLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$POF target file: "${ship.hudTargetModelFile}" could not be resolved along the active mod's search path`,
+          severity: "warning",
+        });
+      }
+    }
+
+    if (
+      ship.genericDebrisModelFile &&
+      ship.genericDebrisModelFileLine !== null &&
+      !isUnsetFileValue(ship.genericDebrisModelFile)
+    ) {
+      if (!resolvePofForShipGenericDebrisModel(documentUri, ship)) {
+        diagnostics.push({
+          line: ship.genericDebrisModelFileLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `+Generic Debris POF file: "${ship.genericDebrisModelFile}" could not be resolved along the active mod's search path`,
+          severity: "warning",
+        });
+      }
+    }
+  }
+
+  return diagnostics;
 }
 
 /**
@@ -2386,6 +2539,75 @@ connection.onHover((params): Hover | null => {
 
   const ships = shipEntriesByUri.get(params.textDocument.uri) ?? [];
 
+  // Hovering directly over $Cockpit POF file:/$POF file Techroom:/$POF target file:/
+  // +Generic Debris POF file: gets a small, single-field hover instead of the full
+  // effective-entry dump below - same rationale as the weapon model-field hover above.
+  const shipAtModelFieldLine = ships.find(
+    (s) =>
+      s.cockpitModelFileLine === params.position.line ||
+      s.techModelLine === params.position.line ||
+      s.hudTargetModelFileLine === params.position.line ||
+      s.genericDebrisModelFileLine === params.position.line,
+  );
+  if (shipAtModelFieldLine) {
+    try {
+      const filePath = fileURLToPath(params.textDocument.uri);
+      const searchDirs = buildSearchPath(filePath);
+      const effective = getEffectiveShipTable(searchDirs).get(shipAtModelFieldLine.name.toLowerCase());
+      if (effective) {
+        const sharedPrefix = trimSharedSourcePrefix ? computeSharedSourcePrefix(effective.layerSources) : "";
+        let label: string;
+        let value: string | null;
+        let source: string | null;
+        let pof: PofModel | null;
+        if (shipAtModelFieldLine.cockpitModelFileLine === params.position.line) {
+          label = "$Cockpit POF file:";
+          value = effective.cockpitModelFile;
+          source = effective.cockpitModelFileSource;
+          pof =
+            value && !isUnsetFileValue(value) ? resolvePofForShipCockpitModel(params.textDocument.uri, shipAtModelFieldLine) : null;
+        } else if (shipAtModelFieldLine.techModelLine === params.position.line) {
+          label = "$POF file Techroom:";
+          value = effective.techModel;
+          source = effective.techModelSource;
+          pof = value && !isUnsetFileValue(value) ? resolvePofForShipTechModel(params.textDocument.uri, shipAtModelFieldLine) : null;
+        } else if (shipAtModelFieldLine.hudTargetModelFileLine === params.position.line) {
+          label = "$POF target file:";
+          value = effective.hudTargetModelFile;
+          source = effective.hudTargetModelFileSource;
+          pof =
+            value && !isUnsetFileValue(value)
+              ? resolvePofForShipHudTargetModel(params.textDocument.uri, shipAtModelFieldLine)
+              : null;
+        } else {
+          label = "+Generic Debris POF file:";
+          value = effective.genericDebrisModelFile;
+          source = effective.genericDebrisModelFileSource;
+          pof =
+            value && !isUnsetFileValue(value)
+              ? resolvePofForShipGenericDebrisModel(params.textDocument.uri, shipAtModelFieldLine)
+              : null;
+        }
+        const hasValue = value && !isUnsetFileValue(value);
+        const status = !hasValue
+          ? "(none)"
+          : pof
+            ? `\`${value}\` ✓ (${formatPofSummary(pof)})`
+            : `\`${value}\` ⚠️ not found along the active mod's search path`;
+        return {
+          contents: {
+            kind: "markdown",
+            value:
+              `**${label} ${effective.name}**\n\n${status}` +
+              (source ? `\n\nFrom: \`${stripSharedSourcePrefix(source, sharedPrefix)}\`` : ""),
+          },
+        };
+      }
+    } catch {
+      // Fall through to the generic per-line hover below.
+    }
+  }
+
   const shipAtNameLine = ships.find((s) => s.nameLine === params.position.line);
   if (shipAtNameLine) {
     try {
@@ -2926,10 +3148,11 @@ function getByUri<T>(map: Map<string, T>, uri: string): T | undefined {
  * (mirrors the subsystem-hover lookup above), resolves and decodes its POF's full
  * geometry, and returns everything the client's 3D viewer webview needs to render
  * every submodel and highlight the one matching this subsystem. Also matches a ship's
- * `$POF file:` line and a weapon's `$Model file:`/`$Tech Model:`/`$External Model File:`
- * line, all opening the model with nothing highlighted (weapons have no `$Subsystem:`
- * equivalent). Returns a `{ error }` object instead of a result for any line that isn't
- * one of these, or
+ * `$POF file:`/`$Cockpit POF file:`/`$POF file Techroom:`/`$POF target file:`/
+ * `+Generic Debris POF file:` line and a weapon's `$Model file:`/`$Tech Model:`/
+ * `$External Model File:` line, all opening the model with nothing highlighted (neither
+ * table has a `$Subsystem:` equivalent for these). Returns a `{ error }` object instead
+ * of a result for any line that isn't one of these, or
  * whose model can't be resolved - distinguished by reason (rather than a bare `null`,
  * as an earlier version returned for both) specifically so a failure reported against
  * real-world data can be diagnosed remotely instead of just "nothing happened, no
@@ -2947,23 +3170,69 @@ connection.onRequest(
       // matching submodel, so the viewer just opens showing the whole model.
       const isModelFileLine = ship.modelFileLine === params.line;
       const subsystem = ship.subsystems.find((s) => s.line === params.line);
-      if (!isModelFileLine && !subsystem) {
+      if (isModelFileLine || subsystem) {
+        // resolvePofForShipEntry() itself already falls back to the mod's merged/effective
+        // $POF file: (a .tbm override block for this ship may not repeat that field at
+        // all), so don't gate on ship.modelFile - this document's own locally-parsed
+        // value - before even trying; only use it as a display label, with a generic
+        // fallback when this block doesn't set it locally.
+        const pof = resolvePofForShipEntry(params.uri, ship);
+        if (!pof) {
+          return {
+            error: `Couldn't resolve model "${ship.modelFile ?? "(not set in this document - check a merged .tbm layer)"}" for ship "${ship.name}" along the mod's search path.`,
+          };
+        }
+
+        return buildPofGeometryResult(pof, ship.modelFile ?? "(unknown model file)", subsystem ? subsystem.name : null);
+      }
+
+      // The remaining ship model fields (cockpit/tech/HUD-target/generic-debris) have no
+      // $Subsystem: equivalent either, same "null target name" treatment as a weapon's
+      // model fields below.
+      const shipModelFields: {
+        line: number | null;
+        label: string;
+        value: string | null;
+        resolve: () => PofModel | null;
+      }[] = [
+        {
+          line: ship.cockpitModelFileLine,
+          label: "$Cockpit POF file:",
+          value: ship.cockpitModelFile,
+          resolve: () => resolvePofForShipCockpitModel(params.uri, ship),
+        },
+        {
+          line: ship.techModelLine,
+          label: "$POF file Techroom:",
+          value: ship.techModel,
+          resolve: () => resolvePofForShipTechModel(params.uri, ship),
+        },
+        {
+          line: ship.hudTargetModelFileLine,
+          label: "$POF target file:",
+          value: ship.hudTargetModelFile,
+          resolve: () => resolvePofForShipHudTargetModel(params.uri, ship),
+        },
+        {
+          line: ship.genericDebrisModelFileLine,
+          label: "+Generic Debris POF file:",
+          value: ship.genericDebrisModelFile,
+          resolve: () => resolvePofForShipGenericDebrisModel(params.uri, ship),
+        },
+      ];
+      const matchedShipField = shipModelFields.find((f) => f.line === params.line);
+      if (!matchedShipField) {
         continue;
       }
 
-      // resolvePofForShipEntry() itself already falls back to the mod's merged/effective
-      // $POF file: (a .tbm override block for this ship may not repeat that field at
-      // all), so don't gate on ship.modelFile - this document's own locally-parsed
-      // value - before even trying; only use it as a display label, with a generic
-      // fallback when this block doesn't set it locally.
-      const pof = resolvePofForShipEntry(params.uri, ship);
-      if (!pof) {
+      const shipFieldPof = matchedShipField.resolve();
+      if (!shipFieldPof) {
         return {
-          error: `Couldn't resolve model "${ship.modelFile ?? "(not set in this document - check a merged .tbm layer)"}" for ship "${ship.name}" along the mod's search path.`,
+          error: `Couldn't resolve model "${matchedShipField.value ?? "(not set in this document - check a merged .tbm layer)"}" for ship "${ship.name}"'s ${matchedShipField.label} along the mod's search path.`,
         };
       }
 
-      return buildPofGeometryResult(pof, ship.modelFile ?? "(unknown model file)", subsystem ? subsystem.name : null);
+      return buildPofGeometryResult(shipFieldPof, matchedShipField.value ?? "(unknown model file)", null);
     }
 
     // Weapons have no `$Subsystem:` concept, so `$Model file:`/`$Tech Model:`/
@@ -3002,7 +3271,7 @@ connection.onRequest(
     }
 
     return {
-      error: `Line ${params.line + 1} isn't a $Subsystem:, $POF file:, $Model file:, $Tech Model:, or $External Model File: entry in this document.`,
+      error: `Line ${params.line + 1} isn't a $Subsystem:, $POF file:, $Cockpit POF file:, $POF file Techroom:, $POF target file:, +Generic Debris POF file:, $Model file:, $Tech Model:, or $External Model File: entry in this document.`,
     };
   },
 );

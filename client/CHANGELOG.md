@@ -14,6 +14,8 @@ Initial packaging for the VS Code Marketplace. Highlights:
 - VP/VPC archive content resolution, including LZ41-compressed entries.
 - Interactive 3D POF model viewer with subsystem navigation, now also reachable (F12 and a
   hover "Open 3D view" link) from a weapon's `$Model file:`, `$Tech Model:`, and
-  `$External Model File:` lines, not just a ship's `$Subsystem:`/`$POF file:`.
+  `$External Model File:` lines, and a ship's `$Cockpit POF file:`, `$POF file Techroom:`,
+  `$POF target file:`, and `+Generic Debris POF file:` lines, not just a ship's
+  `$Subsystem:`/`$POF file:`.
 - Knossos-aware mod search-path and load-order resolution.
  

@@ -59,3 +59,38 @@ test("a .tbm layer setting species also carries a provenance source distinct fro
   assert.ok(entry?.speciesSource?.endsWith("mymod-shp.tbm"));
   assert.notEqual(entry?.speciesSource, entry?.aiClassSource);
 });
+
+test("a .tbm layer overriding $POF file Techroom: leaves $POF file:/$Cockpit POF file:/$POF target file: untouched", () => {
+  const baseTbl = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$POF file: fighter3.pof",
+    "$Cockpit POF file: fighter3_cockpit.pof",
+    "$POF file Techroom: fighter3_tech.pof",
+    "$POF target file: fighter3_hud.pof",
+    "#End",
+  ].join("\n");
+  const modTbm = ["#Ship Classes", "$Name: GTF Ulysses", "$POF file Techroom: fighter3_tech_hd.pof", "#End"].join("\n");
+  const table = buildEffectiveShipTable([makeSearchDir({ "ships.tbl": baseTbl, "mymod-shp.tbm": modTbm })]);
+  const entry = table.get("gtf ulysses");
+
+  assert.equal(entry?.modelFile, "fighter3.pof");
+  assert.equal(entry?.cockpitModelFile, "fighter3_cockpit.pof");
+  assert.equal(entry?.techModel, "fighter3_tech_hd.pof");
+  assert.ok(entry?.techModelSource?.endsWith("mymod-shp.tbm"));
+  assert.equal(entry?.hudTargetModelFile, "fighter3_hud.pof");
+});
+
+test("promotes +Generic Debris POF file: (nested inside $Debris:) into the effective entry", () => {
+  const baseTbl = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$Debris:",
+    "+Generic Debris POF file: fighter3_debris.pof",
+    "#End",
+  ].join("\n");
+  const table = buildEffectiveShipTable([makeSearchDir({ "ships.tbl": baseTbl })]);
+  const entry = table.get("gtf ulysses");
+
+  assert.equal(entry?.genericDebrisModelFile, "fighter3_debris.pof");
+});

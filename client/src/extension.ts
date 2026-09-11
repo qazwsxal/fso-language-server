@@ -154,11 +154,12 @@ export function activate(context: ExtensionContext): void {
 
   /**
    * F12 on a ship's `$Subsystem:` line opens an explorable 3D view of that ship's POF
-   * model instead of navigating to a text location; F12 on its `$POF file:` line does
-   * the same, opening the model with no particular submodel highlighted, as does F12 on
-   * a weapon's `$Model file:`/`$Tech Model:`/`$External Model File:` line (see
-   * server.ts's getPofGeometryForSubsystem handler, which matches all of these lines).
-   * This is deliberately NOT
+   * model instead of navigating to a text location; F12 on its `$POF file:`/`$Cockpit
+   * POF file:`/`$POF file Techroom:`/`$POF target file:`/`+Generic Debris POF file:`
+   * line does the same, opening the model with no particular submodel highlighted, as
+   * does F12 on a weapon's `$Model file:`/`$Tech Model:`/`$External Model File:` line
+   * (see server.ts's getPofGeometryForSubsystem handler, which matches all of these
+   * lines). This is deliberately NOT
    * implemented as a `languages.registerDefinitionProvider` (as an earlier version of
    * this feature was) - VSCode calls a registered DefinitionProvider on every ctrl+hover
    * mouse move to decide whether to show the "click here to go to definition" underline,
@@ -219,12 +220,17 @@ export function activate(context: ExtensionContext): void {
   const subsystemHoverProvider: HoverProvider = {
     provideHover(document, position) {
       const text = document.lineAt(position.line).text;
-      // Matches `$Subsystem:` (opens the model highlighting that submodel), a ship's
-      // `$POF file:`, and a weapon's `$Model file:`/`$Tech Model:`/`$External Model
-      // File:` (all of which open the model with nothing highlighted) - server.ts's
-      // getPofGeometryForSubsystem handler resolves every one of these lines the same
-      // way.
-      const match = /^\s*\$(Subsystem|POF file|Model file|Tech Model|External Model File)\s*:\s*/i.exec(text);
+      // Matches `$Subsystem:` (opens the model highlighting that submodel); a ship's
+      // `$POF file:`/`$Cockpit POF file:`/`$POF file Techroom:`/`$POF target file:`/
+      // `+Generic Debris POF file:`; and a weapon's `$Model file:`/`$Tech Model:`/
+      // `$External Model File:` (all of which open the model with nothing highlighted) -
+      // server.ts's getPofGeometryForSubsystem handler resolves every one of these lines
+      // the same way. `[$+]` rather than a bare `$` since `+Generic Debris POF file:` is
+      // the one `+`-sigil field in this set.
+      const match =
+        /^\s*[$+](Subsystem|POF file Techroom|POF target file|POF file|Cockpit POF file|Generic Debris POF file|Model file|Tech Model|External Model File)\s*:\s*/i.exec(
+          text,
+        );
       if (!match) {
         return undefined;
       }

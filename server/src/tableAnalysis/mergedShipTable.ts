@@ -19,6 +19,18 @@ export interface EffectiveShipEntry {
   allLocations: SourceLocation[];
   modelFile: string | null;
   modelFileSource: string | null;
+  /** From `$Cockpit POF file:` - the 3D cockpit interior model. */
+  cockpitModelFile: string | null;
+  cockpitModelFileSource: string | null;
+  /** From `$POF file Techroom:` - the separate POF shown in the tech room / ship database. */
+  techModel: string | null;
+  techModelSource: string | null;
+  /** From `$POF target file:` - a low-detail model substituted in the HUD target monitor. */
+  hudTargetModelFile: string | null;
+  hudTargetModelFileSource: string | null;
+  /** From `+Generic Debris POF file:` - the debris-chunk model used when this ship explodes. */
+  genericDebrisModelFile: string | null;
+  genericDebrisModelFileSource: string | null;
   subsystems: ShipSubsystemRef[];
   subsystemsSource: string | null;
   defaultPrimaryBanks: ShipBankList | null;
@@ -115,6 +127,14 @@ function applyLayer(result: Map<string, EffectiveShipEntry>, resolved: ResolvedF
         allLocations: [],
         modelFile: null,
         modelFileSource: null,
+        cockpitModelFile: null,
+        cockpitModelFileSource: null,
+        techModel: null,
+        techModelSource: null,
+        hudTargetModelFile: null,
+        hudTargetModelFileSource: null,
+        genericDebrisModelFile: null,
+        genericDebrisModelFileSource: null,
         subsystems: [],
         subsystemsSource: null,
         defaultPrimaryBanks: null,
@@ -145,6 +165,22 @@ function applyLayer(result: Map<string, EffectiveShipEntry>, resolved: ResolvedF
     if (entry.modelFile) {
       merged.modelFile = entry.modelFile;
       merged.modelFileSource = sourceLabel;
+    }
+    if (entry.cockpitModelFile) {
+      merged.cockpitModelFile = entry.cockpitModelFile;
+      merged.cockpitModelFileSource = sourceLabel;
+    }
+    if (entry.techModel) {
+      merged.techModel = entry.techModel;
+      merged.techModelSource = sourceLabel;
+    }
+    if (entry.hudTargetModelFile) {
+      merged.hudTargetModelFile = entry.hudTargetModelFile;
+      merged.hudTargetModelFileSource = sourceLabel;
+    }
+    if (entry.genericDebrisModelFile) {
+      merged.genericDebrisModelFile = entry.genericDebrisModelFile;
+      merged.genericDebrisModelFileSource = sourceLabel;
     }
     if (entry.subsystems.length > 0) {
       merged.subsystems = entry.subsystems;

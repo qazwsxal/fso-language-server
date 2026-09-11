@@ -39,6 +39,25 @@ export interface ShipEntryInfo {
   modelFile: string | null;
   /** Line of the `$POF file:` entry that set `modelFile`, or null if none was seen yet. Lets F12 on that line open the 3D viewer at the model's root instead of only working on `$Subsystem:` lines. */
   modelFileLine: number | null;
+  /** From `$Cockpit POF file:` (confirmed against ship.cpp's `cockpit_pof_file` field) - the 3D cockpit interior model shown when flying this ship. */
+  cockpitModelFile: string | null;
+  cockpitModelFileLine: number | null;
+  /** From `$POF file Techroom:` (confirmed against ship.cpp's `pof_file_tech` field) - the separate POF shown in the tech room / ship database, ships.tbl's equivalent of weapons.tbl's `$Tech Model:`. */
+  techModel: string | null;
+  techModelLine: number | null;
+  /** From `$POF target file:` (confirmed against ship.cpp's `pof_file_hud` field) - a low-detail model substituted in the HUD target monitor. */
+  hudTargetModelFile: string | null;
+  hudTargetModelFileLine: number | null;
+  /**
+   * From `+Generic Debris POF file:` (confirmed against ship.cpp's `generic_debris_pof_file`
+   * field) - the debris-chunk model used when this ship explodes, if it has no per-
+   * subsystem debris of its own. A `+`-sigil sub-field nested inside the `$Debris:`
+   * block, matched by key alone regardless of the enclosing block (same approach as the
+   * cross-block sound fields below) since this flat extractor has no general block-scope
+   * tracking beyond `$Subsystem:`.
+   */
+  genericDebrisModelFile: string | null;
+  genericDebrisModelFileLine: number | null;
   subsystems: ShipSubsystemRef[];
   /**
    * Ship-level only - `$Default PBanks:`/`$Default SBanks:` are also valid inside a
@@ -195,6 +214,9 @@ const SOUND_FIELDS = new Set([
  */
 const HANDLED_TOP_LEVEL_KEYS = new Set([
   "pof file",
+  "cockpit pof file",
+  "pof file techroom",
+  "pof target file",
   "default pbanks",
   "default sbanks",
   "armor type",
@@ -228,6 +250,14 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           nameLine: field.line,
           modelFile: null,
           modelFileLine: null,
+          cockpitModelFile: null,
+          cockpitModelFileLine: null,
+          techModel: null,
+          techModelLine: null,
+          hudTargetModelFile: null,
+          hudTargetModelFileLine: null,
+          genericDebrisModelFile: null,
+          genericDebrisModelFileLine: null,
           subsystems: [],
           defaultPrimaryBanks: null,
           defaultSecondaryBanks: null,
@@ -276,6 +306,9 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           current.noCreate = true;
         } else if (key === "remove") {
           current.remove = true;
+        } else if (key === "generic debris pof file" && field.value.trim()) {
+          current.genericDebrisModelFile = field.value.trim();
+          current.genericDebrisModelFileLine = field.line;
         }
         continue;
       }
@@ -305,6 +338,15 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
       if (key === "pof file") {
         current.modelFile = field.value.trim();
         current.modelFileLine = field.line;
+      } else if (key === "cockpit pof file") {
+        current.cockpitModelFile = field.value.trim();
+        current.cockpitModelFileLine = field.line;
+      } else if (key === "pof file techroom") {
+        current.techModel = field.value.trim();
+        current.techModelLine = field.line;
+      } else if (key === "pof target file") {
+        current.hudTargetModelFile = field.value.trim();
+        current.hudTargetModelFileLine = field.line;
       } else if (key === "default pbanks") {
         current.defaultPrimaryBanks = { line: field.line, weaponNames: splitBankList(field.value) };
       } else if (key === "default sbanks") {

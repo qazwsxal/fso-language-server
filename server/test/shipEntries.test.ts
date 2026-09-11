@@ -91,3 +91,39 @@ test("does not attribute a $Field: inside a $Subsystem: block to the ship's misc
   const [ship] = extractShipEntries(parseTable(text).sections);
   assert.deepEqual(ship.miscFieldRefs, []);
 });
+
+test("extracts $Cockpit POF file:/$POF file Techroom:/$POF target file: separately from $POF file:", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$POF file: fighter1.pof",
+    "$Cockpit POF file: fighter1_cockpit.pof",
+    "$POF file Techroom: fighter1_tech.pof",
+    "$POF target file: fighter1_hud.pof",
+    "#End",
+  ].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.equal(ship.modelFile, "fighter1.pof");
+  assert.equal(ship.cockpitModelFile, "fighter1_cockpit.pof");
+  assert.equal(ship.cockpitModelFileLine, 3);
+  assert.equal(ship.techModel, "fighter1_tech.pof");
+  assert.equal(ship.techModelLine, 4);
+  assert.equal(ship.hudTargetModelFile, "fighter1_hud.pof");
+  assert.equal(ship.hudTargetModelFileLine, 5);
+});
+
+test("extracts +Generic Debris POF file: nested inside $Debris: as a model reference, not a misc field", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$Debris:",
+    "+Min Lifetime: 1.0",
+    "+Generic Debris POF file: fighter1_debris.pof",
+    "+Max Lifetime: 5.0",
+    "#End",
+  ].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.equal(ship.genericDebrisModelFile, "fighter1_debris.pof");
+  assert.equal(ship.genericDebrisModelFileLine, 4);
+  assert.deepEqual(ship.miscFieldRefs, []);
+});
