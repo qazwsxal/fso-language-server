@@ -19,6 +19,12 @@ export interface EffectiveWeaponEntry {
   allLocations: SourceLocation[];
   modelFile: string | null;
   modelFileSource: string | null;
+  /** From `$Tech Model:` - the separate POF shown in the tech room / weapon database. */
+  techModel: string | null;
+  techModelSource: string | null;
+  /** From `$External Model File:` - the POF substituted for `$Model file:` in the external/cockpit view. */
+  externalModelFile: string | null;
+  externalModelFileSource: string | null;
   damageType: string | null;
   damageTypeSource: string | null;
   /** One entry per sound-referencing field actually set by any layer (e.g. "impactsnd" -> {value, source}) - see fieldMapMerge.ts. */
@@ -41,8 +47,9 @@ export function collectDisplayWeaponNames(weaponsTable: Map<string, EffectiveWea
  * path, mirroring buildEffectiveShipTable() in mergedShipTable.ts - same merge
  * algorithm (base .tbl from the single highest-priority directory, all matching
  * `-wep.tbm` applied lowest-to-highest priority, same-directory ties broken
- * reverse-alphabetically), just for weapons.tbl's `$Model File:` instead of ships.tbl's
- * richer field set. See that module's doc comment for the full rationale.
+ * reverse-alphabetically), just for weapons.tbl's `$Model File:`/`$Tech Model:`/
+ * `$External Model File:` instead of ships.tbl's richer field set. See that module's doc
+ * comment for the full rationale.
  */
 export function buildEffectiveWeaponsTable(searchDirs: string[]): Map<string, EffectiveWeaponEntry> {
   const result = new Map<string, EffectiveWeaponEntry>();
@@ -96,6 +103,10 @@ function applyLayer(result: Map<string, EffectiveWeaponEntry>, resolved: Resolve
         allLocations: [],
         modelFile: null,
         modelFileSource: null,
+        techModel: null,
+        techModelSource: null,
+        externalModelFile: null,
+        externalModelFileSource: null,
         damageType: null,
         damageTypeSource: null,
         soundsByField: new Map(),
@@ -109,6 +120,14 @@ function applyLayer(result: Map<string, EffectiveWeaponEntry>, resolved: Resolve
     if (entry.modelFile) {
       merged.modelFile = entry.modelFile;
       merged.modelFileSource = sourceLabel;
+    }
+    if (entry.techModel) {
+      merged.techModel = entry.techModel;
+      merged.techModelSource = sourceLabel;
+    }
+    if (entry.externalModelFile) {
+      merged.externalModelFile = entry.externalModelFile;
+      merged.externalModelFileSource = sourceLabel;
     }
     if (entry.damageType) {
       merged.damageType = entry.damageType;

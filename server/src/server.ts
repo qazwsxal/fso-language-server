@@ -739,28 +739,97 @@ function resolvePofForWeaponEntry(documentUri: string, weapon: WeaponEntryInfo):
   }
 }
 
+/** Same resolution as resolvePofForWeaponEntry(), but for `$Tech Model:` - the separate POF shown in the tech room / weapon database. */
+function resolvePofForWeaponTechModel(documentUri: string, weapon: WeaponEntryInfo): PofModel | null {
+  try {
+    const filePath = fileURLToPath(documentUri);
+    const searchDirs = buildSearchPath(filePath);
+    const effective = getEffectiveWeaponsTable(searchDirs).get(weapon.name.toLowerCase());
+    const techModel = effective?.techModel ?? weapon.techModel;
+    if (!techModel || isUnsetFileValue(techModel)) {
+      return null;
+    }
+    const resolved = resolveModelFile(searchDirs, techModel);
+    if (!resolved) {
+      return null;
+    }
+    return loadPofCached(resolved);
+  } catch {
+    return null;
+  }
+}
+
+/** Same resolution as resolvePofForWeaponEntry(), but for `$External Model File:` - the POF substituted for `$Model file:` in the external/cockpit view. */
+function resolvePofForWeaponExternalModel(documentUri: string, weapon: WeaponEntryInfo): PofModel | null {
+  try {
+    const filePath = fileURLToPath(documentUri);
+    const searchDirs = buildSearchPath(filePath);
+    const effective = getEffectiveWeaponsTable(searchDirs).get(weapon.name.toLowerCase());
+    const externalModelFile = effective?.externalModelFile ?? weapon.externalModelFile;
+    if (!externalModelFile || isUnsetFileValue(externalModelFile)) {
+      return null;
+    }
+    const resolved = resolveModelFile(searchDirs, externalModelFile);
+    if (!resolved) {
+      return null;
+    }
+    return loadPofCached(resolved);
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Flags a weapon's `$Model file:` when it can't be resolved anywhere along the active
- * mod's search path - a typo'd or missing missile/bomb model filename. Only checked for
- * fields physically present in this document, same scoping rationale as
- * computeBankCountDiagnostics().
+ * Flags a weapon's `$Model file:`/`$Tech Model:`/`$External Model File:` when it can't
+ * be resolved anywhere along the active mod's search path - a typo'd or missing model
+ * filename. Only checked for fields physically present in this document, same scoping
+ * rationale as computeBankCountDiagnostics().
  */
 function computeWeaponModelDiagnostics(documentUri: string, weapons: WeaponEntryInfo[]): ParseDiagnostic[] {
   const diagnostics: ParseDiagnostic[] = [];
 
   for (const weapon of weapons) {
-    if (!weapon.modelFile || weapon.modelFileLine === null || isUnsetFileValue(weapon.modelFile)) {
-      continue;
+    if (weapon.modelFile && weapon.modelFileLine !== null && !isUnsetFileValue(weapon.modelFile)) {
+      const pof = resolvePofForWeaponEntry(documentUri, weapon);
+      if (!pof) {
+        diagnostics.push({
+          line: weapon.modelFileLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$Model file: "${weapon.modelFile}" could not be resolved along the active mod's search path`,
+          severity: "warning",
+        });
+      }
     }
-    const pof = resolvePofForWeaponEntry(documentUri, weapon);
-    if (!pof) {
-      diagnostics.push({
-        line: weapon.modelFileLine,
-        startCol: 0,
-        endCol: 1000,
-        message: `$Model file: "${weapon.modelFile}" could not be resolved along the active mod's search path`,
-        severity: "warning",
-      });
+
+    if (weapon.techModel && weapon.techModelLine !== null && !isUnsetFileValue(weapon.techModel)) {
+      const techPof = resolvePofForWeaponTechModel(documentUri, weapon);
+      if (!techPof) {
+        diagnostics.push({
+          line: weapon.techModelLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$Tech Model: "${weapon.techModel}" could not be resolved along the active mod's search path`,
+          severity: "warning",
+        });
+      }
+    }
+
+    if (
+      weapon.externalModelFile &&
+      weapon.externalModelFileLine !== null &&
+      !isUnsetFileValue(weapon.externalModelFile)
+    ) {
+      const externalPof = resolvePofForWeaponExternalModel(documentUri, weapon);
+      if (!externalPof) {
+        diagnostics.push({
+          line: weapon.externalModelFileLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$External Model File: "${weapon.externalModelFile}" could not be resolved along the active mod's search path`,
+          severity: "warning",
+        });
+      }
     }
   }
 
@@ -2141,7 +2210,11 @@ connection.onHover((params): Hover | null => {
   const weapons = weaponEntriesByUri.get(params.textDocument.uri) ?? [];
 
   const weaponAtLine = weapons.find(
-    (w) => w.nameLine === params.position.line || w.modelFileLine === params.position.line,
+    (w) =>
+      w.nameLine === params.position.line ||
+      w.modelFileLine === params.position.line ||
+      w.techModelLine === params.position.line ||
+      w.externalModelFileLine === params.position.line,
   );
   if (weaponAtLine) {
     try {
@@ -2150,6 +2223,57 @@ connection.onHover((params): Hover | null => {
       const effective = getEffectiveWeaponsTable(searchDirs).get(weaponAtLine.name.toLowerCase());
       if (effective) {
         const sharedPrefix = trimSharedSourcePrefix ? computeSharedSourcePrefix(effective.layerSources) : "";
+
+        // Hovering directly over one of the three model-file lines gets a small,
+        // single-field hover instead of the full effective-entry dump below - a user
+        // checking why their $Tech Model: won't resolve doesn't want to wade through
+        // $Model file:/$External Model File:/every other tracked field to find it.
+        const modelFieldHover = ((): Hover | null => {
+          let label: string;
+          let value: string | null;
+          let source: string | null;
+          let noneMessage: string;
+          let pof: PofModel | null;
+          if (weaponAtLine.modelFileLine === params.position.line) {
+            label = "$Model file:";
+            value = effective.modelFile;
+            source = effective.modelFileSource;
+            noneMessage = "(none - primaries/lasers typically have no model)";
+            pof = value && !isUnsetFileValue(value) ? resolvePofForWeaponEntry(params.textDocument.uri, weaponAtLine) : null;
+          } else if (weaponAtLine.techModelLine === params.position.line) {
+            label = "$Tech Model:";
+            value = effective.techModel;
+            source = effective.techModelSource;
+            noneMessage = "(none - falls back to $Model file: in the tech room)";
+            pof = value && !isUnsetFileValue(value) ? resolvePofForWeaponTechModel(params.textDocument.uri, weaponAtLine) : null;
+          } else if (weaponAtLine.externalModelFileLine === params.position.line) {
+            label = "$External Model File:";
+            value = effective.externalModelFile;
+            source = effective.externalModelFileSource;
+            noneMessage = "(none - falls back to $Model file: in the external/cockpit view)";
+            pof = value && !isUnsetFileValue(value) ? resolvePofForWeaponExternalModel(params.textDocument.uri, weaponAtLine) : null;
+          } else {
+            return null;
+          }
+          const hasValue = value && !isUnsetFileValue(value);
+          const status = !hasValue
+            ? noneMessage
+            : pof
+              ? `\`${value}\` ✓ (${formatPofSummary(pof)})`
+              : `\`${value}\` ⚠️ not found along the active mod's search path`;
+          return {
+            contents: {
+              kind: "markdown",
+              value:
+                `**${label} ${effective.name}**\n\n${status}` +
+                (source ? `\n\nFrom: \`${stripSharedSourcePrefix(source, sharedPrefix)}\`` : ""),
+            },
+          };
+        })();
+        if (modelFieldHover) {
+          return modelFieldHover;
+        }
+
         const layers = effective.layerSources
           .map((s, i) => `${i + 1}. \`${stripSharedSourcePrefix(s, sharedPrefix)}\``)
           .join("\n");
@@ -2160,6 +2284,22 @@ connection.onHover((params): Hover | null => {
           : pof
             ? `\`${effective.modelFile}\` ✓ (${formatPofSummary(pof)})`
             : `\`${effective.modelFile}\` ⚠️ not found along the active mod's search path`;
+        const hasTechModel = effective.techModel && !isUnsetFileValue(effective.techModel);
+        const techPof = hasTechModel ? resolvePofForWeaponTechModel(params.textDocument.uri, weaponAtLine) : null;
+        const techModelStatus = !hasTechModel
+          ? "(none - falls back to $Model file: in the tech room)"
+          : techPof
+            ? `\`${effective.techModel}\` ✓ (${formatPofSummary(techPof)})`
+            : `\`${effective.techModel}\` ⚠️ not found along the active mod's search path`;
+        const hasExternalModelFile = effective.externalModelFile && !isUnsetFileValue(effective.externalModelFile);
+        const externalPof = hasExternalModelFile
+          ? resolvePofForWeaponExternalModel(params.textDocument.uri, weaponAtLine)
+          : null;
+        const externalModelStatus = !hasExternalModelFile
+          ? "(none - falls back to $Model file: in the external/cockpit view)"
+          : externalPof
+            ? `\`${effective.externalModelFile}\` ✓ (${formatPofSummary(externalPof)})`
+            : `\`${effective.externalModelFile}\` ⚠️ not found along the active mod's search path`;
         const fieldTable = renderEffectiveWeaponFieldTable(effective, sharedPrefix);
         return {
           contents: {
@@ -2167,6 +2307,8 @@ connection.onHover((params): Hover | null => {
             value:
               `**$Name: ${effective.name}** (effective, across the active mod's search path)\n\n` +
               `Model File: ${modelStatus}${effective.modelFileSource ? `\n\nFrom: \`${stripSharedSourcePrefix(effective.modelFileSource, sharedPrefix)}\`` : ""}\n\n` +
+              `Tech Model: ${techModelStatus}${effective.techModelSource ? `\n\nFrom: \`${stripSharedSourcePrefix(effective.techModelSource, sharedPrefix)}\`` : ""}\n\n` +
+              `External Model File: ${externalModelStatus}${effective.externalModelFileSource ? `\n\nFrom: \`${stripSharedSourcePrefix(effective.externalModelFileSource, sharedPrefix)}\`` : ""}\n\n` +
               (sharedPrefix ? `Common path: \`${sharedPrefix}\`\n\n` : "") +
               `Layers applied (base first, later wins):\n${layers}` +
               (fieldTable ? `\n\n---\n\n${fieldTable}` : ""),
@@ -2783,9 +2925,12 @@ function getByUri<T>(map: Map<string, T>, uri: string): T | undefined {
  * Given a document URI + line, finds the ship `$Subsystem:` entry at that exact line
  * (mirrors the subsystem-hover lookup above), resolves and decodes its POF's full
  * geometry, and returns everything the client's 3D viewer webview needs to render
- * every submodel and highlight the one matching this subsystem. Returns a `{ error }`
- * object instead of a result for any line that isn't a `$Subsystem:`/`$POF file:` entry,
- * or whose model can't be resolved - distinguished by reason (rather than a bare `null`,
+ * every submodel and highlight the one matching this subsystem. Also matches a ship's
+ * `$POF file:` line and a weapon's `$Model file:`/`$Tech Model:`/`$External Model File:`
+ * line, all opening the model with nothing highlighted (weapons have no `$Subsystem:`
+ * equivalent). Returns a `{ error }` object instead of a result for any line that isn't
+ * one of these, or
+ * whose model can't be resolved - distinguished by reason (rather than a bare `null`,
  * as an earlier version returned for both) specifically so a failure reported against
  * real-world data can be diagnosed remotely instead of just "nothing happened, no
  * information why". F12's own call site (unlike the hover-link command) ignores the
@@ -2821,7 +2966,44 @@ connection.onRequest(
       return buildPofGeometryResult(pof, ship.modelFile ?? "(unknown model file)", subsystem ? subsystem.name : null);
     }
 
-    return { error: `Line ${params.line + 1} isn't a $Subsystem: or $POF file: entry in this document.` };
+    // Weapons have no `$Subsystem:` concept, so `$Model file:`/`$Tech Model:`/
+    // `$External Model File:` just open the whole model with nothing highlighted - same
+    // "null target name" treatment as a ship's bare `$POF file:` line above.
+    const weapons = getByUri(weaponEntriesByUri, params.uri) ?? [];
+    for (const weapon of weapons) {
+      const weaponModelFields: {
+        line: number | null;
+        label: string;
+        value: string | null;
+        resolve: () => PofModel | null;
+      }[] = [
+        { line: weapon.modelFileLine, label: "$Model file:", value: weapon.modelFile, resolve: () => resolvePofForWeaponEntry(params.uri, weapon) },
+        { line: weapon.techModelLine, label: "$Tech Model:", value: weapon.techModel, resolve: () => resolvePofForWeaponTechModel(params.uri, weapon) },
+        {
+          line: weapon.externalModelFileLine,
+          label: "$External Model File:",
+          value: weapon.externalModelFile,
+          resolve: () => resolvePofForWeaponExternalModel(params.uri, weapon),
+        },
+      ];
+      const matched = weaponModelFields.find((f) => f.line === params.line);
+      if (!matched) {
+        continue;
+      }
+
+      const pof = matched.resolve();
+      if (!pof) {
+        return {
+          error: `Couldn't resolve model "${matched.value ?? "(not set in this document - check a merged .tbm layer)"}" for weapon "${weapon.name}"'s ${matched.label} along the mod's search path.`,
+        };
+      }
+
+      return buildPofGeometryResult(pof, matched.value ?? "(unknown model file)", null);
+    }
+
+    return {
+      error: `Line ${params.line + 1} isn't a $Subsystem:, $POF file:, $Model file:, $Tech Model:, or $External Model File: entry in this document.`,
+    };
   },
 );
 

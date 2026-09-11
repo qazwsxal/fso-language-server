@@ -44,3 +44,33 @@ test("a .tbm layer overriding one sound field leaves the base table's other soun
   assert.ok(entry?.soundsByField.get("impactsnd")?.source.endsWith("mymod-wep.tbm"));
   assert.equal(entry?.soundsByField.get("launchsnd")?.value, "92");
 });
+
+test("a .tbm layer overriding $Tech Model: leaves $Model file: untouched", () => {
+  const baseTbl = ["#Primary Weapons", "$Name: Mekhu HL-7", "$Model file: mekhu.pof", "$Tech Model: mekhu_tech.pof", "#End"].join("\n");
+  const modTbm = ["#Primary Weapons", "$Name: Mekhu HL-7", "$Tech Model: mekhu_tech_hd.pof", "#End"].join("\n");
+  const table = buildEffectiveWeaponsTable([makeSearchDir({ "weapons.tbl": baseTbl, "mymod-wep.tbm": modTbm })]);
+  const entry = table.get("mekhu hl-7");
+
+  assert.equal(entry?.modelFile, "mekhu.pof");
+  assert.equal(entry?.techModel, "mekhu_tech_hd.pof");
+  assert.ok(entry?.techModelSource?.endsWith("mymod-wep.tbm"));
+});
+
+test("a .tbm layer overriding $External Model File: leaves $Model file:/$Tech Model: untouched", () => {
+  const baseTbl = [
+    "#Primary Weapons",
+    "$Name: Mekhu HL-7",
+    "$Model file: mekhu.pof",
+    "$Tech Model: mekhu_tech.pof",
+    "$External Model File: mekhu_ext.pof",
+    "#End",
+  ].join("\n");
+  const modTbm = ["#Primary Weapons", "$Name: Mekhu HL-7", "$External Model File: mekhu_ext_hd.pof", "#End"].join("\n");
+  const table = buildEffectiveWeaponsTable([makeSearchDir({ "weapons.tbl": baseTbl, "mymod-wep.tbm": modTbm })]);
+  const entry = table.get("mekhu hl-7");
+
+  assert.equal(entry?.modelFile, "mekhu.pof");
+  assert.equal(entry?.techModel, "mekhu_tech.pof");
+  assert.equal(entry?.externalModelFile, "mekhu_ext_hd.pof");
+  assert.ok(entry?.externalModelFileSource?.endsWith("mymod-wep.tbm"));
+});

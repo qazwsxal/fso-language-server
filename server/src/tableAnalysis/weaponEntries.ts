@@ -14,6 +14,12 @@ export interface WeaponEntryInfo {
   /** Only meaningful for missile/bomb-type weapons - primaries (lasers) typically have no model. Field is `$Model file:` (confirmed against weapons.cpp) - distinct from ships.tbl's `$POF file:`. */
   modelFile: string | null;
   modelFileLine: number | null;
+  /** The separate POF shown in the tech room / weapon database, independent of `$Model file:` (confirmed against weapons.cpp's `$Tech Model:` field). */
+  techModel: string | null;
+  techModelLine: number | null;
+  /** An alternate POF substituted for `$Model file:` when the weapon is viewed externally (e.g. mounted on a ship in the external/cockpit view), per weapons.cpp's `$External Model File:` field. */
+  externalModelFile: string | null;
+  externalModelFileLine: number | null;
   /** References a damage-type string used in one or more armor.tbl `$Damage Type:` entries. */
   damageType: string | null;
   damageTypeLine: number | null;
@@ -82,7 +88,14 @@ const SOUND_FIELDS = new Set([
  * Every weapon-level `$Field:` key with dedicated, specially-handled extraction above -
  * excluded from the generic `miscFieldRefs` catch-all so a field doesn't show up twice.
  */
-const HANDLED_TOP_LEVEL_KEYS = new Set(["model file", "damage type", ...DOLLAR_TEXTURE_FIELDS, ...SOUND_FIELDS]);
+const HANDLED_TOP_LEVEL_KEYS = new Set([
+  "model file",
+  "tech model",
+  "external model file",
+  "damage type",
+  ...DOLLAR_TEXTURE_FIELDS,
+  ...SOUND_FIELDS,
+]);
 
 /** Extracts per-weapon model-file info from a parsed weapons.tbl/*-wep.tbm. */
 export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[] {
@@ -104,6 +117,10 @@ export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[
           nameLine: field.line,
           modelFile: null,
           modelFileLine: null,
+          techModel: null,
+          techModelLine: null,
+          externalModelFile: null,
+          externalModelFileLine: null,
           damageType: null,
           damageTypeLine: null,
           textureRefs: [],
@@ -142,6 +159,12 @@ export function extractWeaponEntries(sections: TableSection[]): WeaponEntryInfo[
       if (key === "model file") {
         current.modelFile = field.value.trim();
         current.modelFileLine = field.line;
+      } else if (key === "tech model") {
+        current.techModel = field.value.trim();
+        current.techModelLine = field.line;
+      } else if (key === "external model file") {
+        current.externalModelFile = field.value.trim();
+        current.externalModelFileLine = field.line;
       } else if (key === "damage type") {
         current.damageType = field.value.trim();
         current.damageTypeLine = field.line;

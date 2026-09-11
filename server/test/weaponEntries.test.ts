@@ -24,6 +24,8 @@ test("captures an untracked top-level $Field: into miscFieldRefs, but not a dedi
     "#Primary Weapons",
     "$Name: Subach HL-7",
     "$Model file: fighter1.pof",
+    "$Tech Model: fighter1_tech.pof",
+    "$External Model File: fighter1_ext.pof",
     "$Mass: 1.0",
     "$Velocity: 350",
     "+Weapon Range: 1500",
@@ -34,4 +36,30 @@ test("captures an untracked top-level $Field: into miscFieldRefs, but not a dedi
     weapon.miscFieldRefs.map((r) => `${r.field}=${r.value}`),
     ["Mass=1.0", "Velocity=350"],
   );
+});
+
+test("extracts $Tech Model: separately from $Model file:", () => {
+  const text = ["#Secondary Weapons", "$Name: Trebuchet", "$Model file: trebuchet.pof", "$Tech Model: trebuchet_tech.pof", "#End"].join(
+    "\n",
+  );
+  const [weapon] = extractWeaponEntries(parseTable(text).sections);
+  assert.equal(weapon.modelFile, "trebuchet.pof");
+  assert.equal(weapon.techModel, "trebuchet_tech.pof");
+  assert.equal(weapon.techModelLine, 3);
+});
+
+test("extracts $External Model File: separately from $Model file:/$Tech Model:", () => {
+  const text = [
+    "#Secondary Weapons",
+    "$Name: Trebuchet",
+    "$Model file: trebuchet.pof",
+    "$Tech Model: trebuchet_tech.pof",
+    "$External Model File: trebuchet_ext.pof",
+    "#End",
+  ].join("\n");
+  const [weapon] = extractWeaponEntries(parseTable(text).sections);
+  assert.equal(weapon.modelFile, "trebuchet.pof");
+  assert.equal(weapon.techModel, "trebuchet_tech.pof");
+  assert.equal(weapon.externalModelFile, "trebuchet_ext.pof");
+  assert.equal(weapon.externalModelFileLine, 4);
 });
