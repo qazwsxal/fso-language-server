@@ -31,6 +31,15 @@ export interface EffectiveShipEntry {
   /** From `+Generic Debris POF file:` - the debris-chunk model used when this ship explodes. */
   genericDebrisModelFile: string | null;
   genericDebrisModelFileSource: string | null;
+  /** From `$Countermeasure type:` - references a weapons.tbl weapon name. */
+  countermeasureType: string | null;
+  countermeasureTypeSource: string | null;
+  /** From `+Use Template:` - references a `#Ship Templates` entry's `$Template:` name. */
+  useTemplate: string | null;
+  useTemplateSource: string | null;
+  /** From `+Use Ship as Template:` - references another ship class's `$Name:`. */
+  useShipAsTemplate: string | null;
+  useShipAsTemplateSource: string | null;
   subsystems: ShipSubsystemRef[];
   subsystemsSource: string | null;
   defaultPrimaryBanks: ShipBankList | null;
@@ -135,6 +144,12 @@ function applyLayer(result: Map<string, EffectiveShipEntry>, resolved: ResolvedF
         hudTargetModelFileSource: null,
         genericDebrisModelFile: null,
         genericDebrisModelFileSource: null,
+        countermeasureType: null,
+        countermeasureTypeSource: null,
+        useTemplate: null,
+        useTemplateSource: null,
+        useShipAsTemplate: null,
+        useShipAsTemplateSource: null,
         subsystems: [],
         subsystemsSource: null,
         defaultPrimaryBanks: null,
@@ -181,6 +196,18 @@ function applyLayer(result: Map<string, EffectiveShipEntry>, resolved: ResolvedF
     if (entry.genericDebrisModelFile) {
       merged.genericDebrisModelFile = entry.genericDebrisModelFile;
       merged.genericDebrisModelFileSource = sourceLabel;
+    }
+    if (entry.countermeasureType) {
+      merged.countermeasureType = entry.countermeasureType;
+      merged.countermeasureTypeSource = sourceLabel;
+    }
+    if (entry.useTemplate) {
+      merged.useTemplate = entry.useTemplate;
+      merged.useTemplateSource = sourceLabel;
+    }
+    if (entry.useShipAsTemplate) {
+      merged.useShipAsTemplate = entry.useShipAsTemplate;
+      merged.useShipAsTemplateSource = sourceLabel;
     }
     if (entry.subsystems.length > 0) {
       merged.subsystems = entry.subsystems;

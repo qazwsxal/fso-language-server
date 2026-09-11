@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { parseTable } from "../src/parser";
-import { extractShipEntries } from "../src/tableAnalysis/shipEntries";
+import { extractShipEntries, extractShipTemplateEntries } from "../src/tableAnalysis/shipEntries";
 
 test("extracts $Explosion Animations: as a quoted name list", () => {
   const text = [
@@ -126,4 +126,50 @@ test("extracts +Generic Debris POF file: nested inside $Debris: as a model refer
   assert.equal(ship.genericDebrisModelFile, "fighter1_debris.pof");
   assert.equal(ship.genericDebrisModelFileLine, 4);
   assert.deepEqual(ship.miscFieldRefs, []);
+});
+
+test("extracts $Countermeasure type: as a weapon-name reference", () => {
+  const text = ["#Ship Classes", "$Name: GTF Ulysses", "$Countermeasure type: Cluster Bomb", "#End"].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.equal(ship.countermeasureType, "Cluster Bomb");
+  assert.equal(ship.countermeasureTypeLine, 2);
+});
+
+test("extracts +Use Template:/+Use Ship as Template: as two distinct cross-references", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTVA Fighter A",
+    "+Use Template: FighterBaseTemplate",
+    "$Name: GTVA Fighter B",
+    "+Use Ship as Template: GTVA Fighter A",
+    "#End",
+  ].join("\n");
+  const [shipA, shipB] = extractShipEntries(parseTable(text).sections);
+  assert.equal(shipA.useTemplate, "FighterBaseTemplate");
+  assert.equal(shipA.useTemplateLine, 2);
+  assert.equal(shipA.useShipAsTemplate, null);
+  assert.equal(shipB.useTemplate, null);
+  assert.equal(shipB.useShipAsTemplate, "GTVA Fighter A");
+  assert.equal(shipB.useShipAsTemplateLine, 4);
+});
+
+test("extractShipTemplateEntries: reads #Ship Templates entries keyed by $Template:, ignoring #Ship Classes", () => {
+  const text = [
+    "#Ship Templates",
+    "$Template: FighterBaseTemplate",
+    "$Template: BomberBaseTemplate",
+    "+Use Template: FighterBaseTemplate",
+    "#End",
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "#End",
+  ].join("\n");
+  const templates = extractShipTemplateEntries(parseTable(text).sections);
+  assert.deepEqual(
+    templates.map((t) => t.name),
+    ["FighterBaseTemplate", "BomberBaseTemplate"],
+  );
+  assert.equal(templates[0].useTemplate, null);
+  assert.equal(templates[1].useTemplate, "FighterBaseTemplate");
+  assert.equal(templates[1].useTemplateLine, 3);
 });

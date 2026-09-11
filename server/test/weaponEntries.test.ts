@@ -63,3 +63,85 @@ test("extracts $External Model File: separately from $Model file:/$Tech Model:",
   assert.equal(weapon.externalModelFile, "trebuchet_ext.pof");
   assert.equal(weapon.externalModelFileLine, 4);
 });
+
+test("extracts the weapon-level $Armor Type: separately from $Damage Type:", () => {
+  const text = [
+    "#Secondary Weapons",
+    "$Name: Trebuchet",
+    "$Damage Type: Terran",
+    "$Armor Type: TrebuchetShell",
+    "#End",
+  ].join("\n");
+  const [weapon] = extractWeaponEntries(parseTable(text).sections);
+  assert.equal(weapon.damageType, "Terran");
+  assert.equal(weapon.armorType, "TrebuchetShell");
+  assert.equal(weapon.armorTypeLine, 3);
+});
+
+test("extracts repeatable $substitute: entries, including the 'none' sentinel", () => {
+  const text = [
+    "#Secondary Weapons",
+    "$Name: Trebuchet",
+    "$substitute: Tempest",
+    "+period: 3",
+    "$substitute: none",
+    "#End",
+  ].join("\n");
+  const [weapon] = extractWeaponEntries(parseTable(text).sections);
+  assert.deepEqual(
+    weapon.substituteRefs.map((r) => `${r.name}@${r.line}`),
+    ["Tempest@2", "none@4"],
+  );
+});
+
+test("extracts $Homing:'s +Ship Types:/+Species:/+IFFs: as kinded name-list refs", () => {
+  const text = [
+    "#Secondary Weapons",
+    "$Name: Trebuchet",
+    "$Homing:",
+    '+Ship Types: ( "Fighter" "Bomber" )',
+    '+Species: ( "Terran" )',
+    '+IFFs: ( "Hostile" )',
+    "#End",
+  ].join("\n");
+  const [weapon] = extractWeaponEntries(parseTable(text).sections);
+  assert.deepEqual(
+    weapon.nameListRefs.map((r) => `${r.field}:${r.kind}:${r.names.join(",")}`),
+    ["Ship Types:ship-type:Fighter,Bomber", "Species:species:Terran", "IFFs:iff:Hostile"],
+  );
+});
+
+test("extracts $Proximity Radius:'s +Proximity IFF:/+Proximity Class: as kinded name-list refs", () => {
+  const text = [
+    "#Secondary Weapons",
+    "$Name: Trebuchet",
+    "$Proximity Radius: 10",
+    '+Proximity IFF: ( "Hostile" )',
+    '+Proximity Class: ( "GTF Ulysses" )',
+    "#End",
+  ].join("\n");
+  const [weapon] = extractWeaponEntries(parseTable(text).sections);
+  assert.deepEqual(
+    weapon.nameListRefs.map((r) => `${r.field}:${r.kind}:${r.names.join(",")}`),
+    ["Proximity IFF:iff:Hostile", "Proximity Class:ship-class:GTF Ulysses"],
+  );
+});
+
+test("extracts +Armor Type: nested inside a repeatable $Conditional Impact: block, separately from the top-level $Armor Type:", () => {
+  const text = [
+    "#Secondary Weapons",
+    "$Name: Trebuchet",
+    "$Armor Type: TrebuchetShell",
+    "$Conditional Impact:",
+    "+Armor Type: TerranFighter",
+    "$Conditional Impact:",
+    "+Armor Type: NO ARMOR",
+    "#End",
+  ].join("\n");
+  const [weapon] = extractWeaponEntries(parseTable(text).sections);
+  assert.equal(weapon.armorType, "TrebuchetShell");
+  assert.deepEqual(
+    weapon.conditionalImpactArmorRefs.map((r) => r.value),
+    ["TerranFighter", "NO ARMOR"],
+  );
+});

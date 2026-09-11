@@ -94,3 +94,20 @@ test("promotes +Generic Debris POF file: (nested inside $Debris:) into the effec
 
   assert.equal(entry?.genericDebrisModelFile, "fighter3_debris.pof");
 });
+
+test("promotes $Countermeasure type:/+Use Template:/+Use Ship as Template: into the effective entry", () => {
+  const baseTbl = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$Countermeasure type: Cluster Bomb",
+    "+Use Template: FighterBaseTemplate",
+    "+Use Ship as Template: GTVA Base Fighter",
+    "#End",
+  ].join("\n");
+  const table = buildEffectiveShipTable([makeSearchDir({ "ships.tbl": baseTbl })]);
+  const entry = table.get("gtf ulysses");
+
+  assert.equal(entry?.countermeasureType, "Cluster Bomb");
+  assert.equal(entry?.useTemplate, "FighterBaseTemplate");
+  assert.equal(entry?.useShipAsTemplate, "GTVA Base Fighter");
+});

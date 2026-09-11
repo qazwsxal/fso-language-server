@@ -133,9 +133,26 @@ export interface ShipEntryInfo {
    * is identical in form to a texture reference, just against a different index.
    */
   soundRefs: ShipTextureRef[];
+  /** From `$Countermeasure type:` (confirmed against ship.cpp: `weapon_info_lookup()`) - references a weapons.tbl weapon name. Non-beam weapons only; the engine warns and ignores a beam given here. Ship-level only. */
+  countermeasureType: string | null;
+  countermeasureTypeLine: number | null;
+  /** From `+Use Template:` (confirmed against ship.cpp: `ship_template_lookup()`) - references a `$Template:` entry's name in this same file's `#Ship Templates` section (or a `.tbm` layer's). Only meaningful right after `$Name:`/`+nocreate`/`+remove`, before any other field - `parse_ship()`'s clone-then-continue-parsing prelude. */
+  useTemplate: string | null;
+  useTemplateLine: number | null;
+  /** From `+Use Ship as Template:` (confirmed against ship.cpp: `ship_info_lookup_sub()`) - references ANOTHER ship class's `$Name:` (not a template), which must already be defined earlier in the parse order. Same prelude-only positioning as `useTemplate` above. */
+  useShipAsTemplate: string | null;
+  useShipAsTemplateLine: number | null;
   /** Modular-table-only sentinels (see fso-table-format): only relevant when merging .tbm layers. */
   noCreate: boolean;
   remove: boolean;
+}
+
+/** A `#Ship Templates` section entry - a reusable field-value preset referenced by ship classes' `+Use Template:` (and possibly by other templates' own `+Use Template:`, for template hierarchies). Deliberately lightweight: only the name/location and its own `+Use Template:` chain are extracted, not the full field set extractShipEntries() captures for real ship classes - templates exist purely as a "clone from" source, and the LSP's only need for them is resolving/validating that `+Use Template:` reference. */
+export interface ShipTemplateEntryInfo {
+  name: string;
+  nameLine: number;
+  useTemplate: string | null;
+  useTemplateLine: number | null;
 }
 
 const TEXTURE_FIELDS = new Set([
@@ -217,6 +234,7 @@ const HANDLED_TOP_LEVEL_KEYS = new Set([
   "cockpit pof file",
   "pof file techroom",
   "pof target file",
+  "countermeasure type",
   "default pbanks",
   "default sbanks",
   "armor type",
@@ -276,6 +294,12 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           textureRefs: [],
           soundRefs: [],
           miscFieldRefs: [],
+          countermeasureType: null,
+          countermeasureTypeLine: null,
+          useTemplate: null,
+          useTemplateLine: null,
+          useShipAsTemplate: null,
+          useShipAsTemplateLine: null,
           noCreate: false,
           remove: false,
         };
@@ -309,6 +333,12 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
         } else if (key === "generic debris pof file" && field.value.trim()) {
           current.genericDebrisModelFile = field.value.trim();
           current.genericDebrisModelFileLine = field.line;
+        } else if (key === "use template" && field.value.trim()) {
+          current.useTemplate = field.value.trim();
+          current.useTemplateLine = field.line;
+        } else if (key === "use ship as template" && field.value.trim()) {
+          current.useShipAsTemplate = field.value.trim();
+          current.useShipAsTemplateLine = field.line;
         }
         continue;
       }
@@ -347,6 +377,9 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
       } else if (key === "pof target file") {
         current.hudTargetModelFile = field.value.trim();
         current.hudTargetModelFileLine = field.line;
+      } else if (key === "countermeasure type") {
+        current.countermeasureType = field.value.trim();
+        current.countermeasureTypeLine = field.line;
       } else if (key === "default pbanks") {
         current.defaultPrimaryBanks = { line: field.line, weaponNames: splitBankList(field.value) };
       } else if (key === "default sbanks") {
@@ -405,7 +438,7 @@ function splitBankList(value: string): string[] {
  * bare `( Fighter Bomber )`-style unquoted, whitespace-separated list is plausible for
  * short identifier-style names.
  */
-function splitNameList(value: string): string[] {
+export function splitNameList(value: string): string[] {
   const quoted = [...value.matchAll(/"([^"]*)"/g)].map((m) => m[1].trim());
   if (quoted.length > 0) {
     return quoted;
@@ -415,6 +448,50 @@ function splitNameList(value: string): string[] {
     .split(/[,\s]+/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+/**
+ * Extracts `#Ship Templates` section entries from a parsed ships.tbl/*-shp.tbm - the
+ * `+Use Template:` cross-reference target. Confirmed against ship.cpp: the section is
+ * `#Ship Templates` (NOT `#Templates`), entries are keyed by `$Template:` (NOT `$Name:`),
+ * and `+nocreate` is accepted but explicitly ignored with a warning ("Ship templates can
+ * not be modified") - so unlike `extractShipEntries()`, there's no noCreate/remove
+ * merge-sentinel handling here at all.
+ */
+export function extractShipTemplateEntries(sections: TableSection[]): ShipTemplateEntryInfo[] {
+  const entries: ShipTemplateEntryInfo[] = [];
+  let current: ShipTemplateEntryInfo | null = null;
+
+  for (const section of sections) {
+    if (section.name.trim().toLowerCase() !== "ship templates") {
+      continue;
+    }
+
+    for (const field of section.entries) {
+      const key = field.key.trim().toLowerCase();
+
+      if (field.sigil === "$" && key === "template") {
+        current = {
+          name: stripHiddenNamePrefix(field.value.trim()),
+          nameLine: field.line,
+          useTemplate: null,
+          useTemplateLine: null,
+        };
+        entries.push(current);
+        continue;
+      }
+      if (!current) {
+        continue;
+      }
+
+      if (field.sigil === "+" && key === "use template" && field.value.trim()) {
+        current.useTemplate = field.value.trim();
+        current.useTemplateLine = field.line;
+      }
+    }
+  }
+
+  return entries;
 }
 
 /** The ship entry whose `$Name:` most recently precedes `line` (entries are in document order). */

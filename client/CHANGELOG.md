@@ -18,4 +18,10 @@ Initial packaging for the VS Code Marketplace. Highlights:
   `$POF target file:`, and `+Generic Debris POF file:` lines, not just a ship's
   `$Subsystem:`/`$POF file:`.
 - Knossos-aware mod search-path and load-order resolution.
+- Go to Definition, hover, and unresolved-reference diagnostics for several more cross-
+  references: a weapon's own `$Armor Type:`, a weapon's `$substitute:` list, a weapon's
+  `$Homing:`/proximity-detonation ship-type/ship-class/species/IFF restriction lists, a
+  ship's `$Countermeasure type:`, and ship-template support - a ship class's
+  `+Use Template:`/`+Use Ship as Template:` now resolve against `#Ship Templates`
+  entries (`$Template:`) and other ship classes respectively.
  

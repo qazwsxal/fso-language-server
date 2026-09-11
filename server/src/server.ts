@@ -28,7 +28,8 @@ import { findSchemaForFile, TableSchema } from "./schemas";
 import { validateAgainstSchema, UnknownFieldSeverity } from "./schemaValidator";
 import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef } from "./tableAnalysis/shipEntries";
 import { buildEffectiveShipTable, EffectiveShipEntry } from "./tableAnalysis/mergedShipTable";
-import { extractWeaponEntries, WeaponEntryInfo, WeaponTextureRef } from "./tableAnalysis/weaponEntries";
+import { buildEffectiveShipTemplateTable, EffectiveShipTemplateEntry } from "./tableAnalysis/mergedShipTemplateTable";
+import { extractWeaponEntries, WeaponEntryInfo, WeaponTextureRef, WeaponNameListKind } from "./tableAnalysis/weaponEntries";
 import { buildEffectiveWeaponsTable, collectDisplayWeaponNames, EffectiveWeaponEntry } from "./tableAnalysis/mergedWeaponsTable";
 import {
   renderEffectiveShipFieldTable,
@@ -363,6 +364,36 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       }
     }
 
+    if (ship.countermeasureTypeLine === line && ship.countermeasureType) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveWeaponsTable(searchDirs).get(ship.countermeasureType.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    if (ship.useTemplateLine === line && ship.useTemplate) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveShipTemplateTable(searchDirs).get(ship.useTemplate.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    if (ship.useShipAsTemplateLine === line && ship.useShipAsTemplate) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveShipTable(searchDirs).get(ship.useShipAsTemplate.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
     const shipTextureRef = findRefAtLine(ship.textureRefs, line);
     if (shipTextureRef) {
       return resolveTextureDefinition(documentUri, shipTextureRef.value);
@@ -438,6 +469,16 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
     const weaponSoundRef = findRefAtLine(weapon.soundRefs, line);
     if (weaponSoundRef) {
       return resolveSoundDefinition(documentUri, weaponSoundRef.value);
+    }
+
+    if (weapon.armorTypeLine === line && weapon.armorType) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveArmorTable(searchDirs).get(weapon.armorType.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
     }
 
     if (weapon.damageTypeLine !== line || !weapon.damageType) {
@@ -555,6 +596,7 @@ connection.onDidChangeWatchedFiles(() => {
   clearSearchPathCache();
   clearPofCache();
   effectiveShipTableCache.clear();
+  effectiveShipTemplateTableCache.clear();
   effectiveWeaponsTableCache.clear();
   effectiveArmorTableCache.clear();
   effectiveSpeciesTableCache.clear();
@@ -596,8 +638,14 @@ function validateAndPublish(document: TextDocument): void {
   const aiClassDiagnostics = computeAiClassDiagnostics(document.uri, ships);
   const explosionAnimationDiagnostics = computeExplosionAnimationDiagnostics(document.uri, ships);
   const targetPriorityGroupsDiagnostics = computeTargetPriorityGroupsDiagnostics(document.uri, ships);
+  const countermeasureTypeDiagnostics = computeCountermeasureTypeDiagnostics(document.uri, ships);
+  const shipTemplateDiagnostics = computeShipTemplateDiagnostics(document.uri, ships);
   const iffDiagnostics = computeIffDiagnostics(document.uri, species);
   const damageTypeDiagnostics = computeDamageTypeDiagnostics(document.uri, weapons);
+  const weaponArmorTypeDiagnostics = computeWeaponArmorTypeDiagnostics(document.uri, weapons);
+  const conditionalImpactArmorDiagnostics = computeConditionalImpactArmorDiagnostics(document.uri, weapons);
+  const weaponSubstituteDiagnostics = computeWeaponSubstituteDiagnostics(document.uri, weapons);
+  const weaponNameListDiagnostics = computeWeaponNameListDiagnostics(document.uri, weapons);
   const textureDiagnostics = computeTextureDiagnostics(document.uri, ships, weapons);
   const soundDiagnostics = computeSoundDiagnostics(document.uri, ships, weapons);
 
@@ -621,8 +669,14 @@ function validateAndPublish(document: TextDocument): void {
     ...aiClassDiagnostics,
     ...explosionAnimationDiagnostics,
     ...targetPriorityGroupsDiagnostics,
+    ...countermeasureTypeDiagnostics,
+    ...shipTemplateDiagnostics,
     ...iffDiagnostics,
     ...damageTypeDiagnostics,
+    ...weaponArmorTypeDiagnostics,
+    ...conditionalImpactArmorDiagnostics,
+    ...weaponSubstituteDiagnostics,
+    ...weaponNameListDiagnostics,
     ...textureDiagnostics,
     ...soundDiagnostics,
   ].map((d) => ({
@@ -653,6 +707,20 @@ function getEffectiveShipTable(searchDirs: string[]): Map<string, EffectiveShipE
   }
   const table = buildEffectiveShipTable(searchDirs);
   effectiveShipTableCache.set(key, table);
+  return table;
+}
+
+/** Cache of the merged/effective `#Ship Templates` view, mirroring effectiveShipTableCache. */
+const effectiveShipTemplateTableCache = new Map<string, Map<string, EffectiveShipTemplateEntry>>();
+
+function getEffectiveShipTemplateTable(searchDirs: string[]): Map<string, EffectiveShipTemplateEntry> {
+  const key = searchDirs.join("|");
+  const cached = effectiveShipTemplateTableCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const table = buildEffectiveShipTemplateTable(searchDirs);
+  effectiveShipTemplateTableCache.set(key, table);
   return table;
 }
 
@@ -1218,6 +1286,97 @@ function computeArmorTypeDiagnostics(documentUri: string, ships: ShipEntryInfo[]
 }
 
 /**
+ * Cross-table check: a ship's `$Countermeasure type:` should name a weapons.tbl weapon
+ * (confirmed against ship.cpp: `weapon_info_lookup()`; non-beam only, but a beam given
+ * here is an engine warning rather than a hard failure, so this stays a warning too).
+ */
+function computeCountermeasureTypeDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let weaponsTable: Map<string, EffectiveWeaponEntry> | null = null;
+
+  for (const ship of ships) {
+    if (!ship.countermeasureType || ship.countermeasureTypeLine === null) {
+      continue;
+    }
+    try {
+      if (!weaponsTable) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        weaponsTable = getEffectiveWeaponsTable(searchDirs);
+      }
+      if (!weaponsTable.has(ship.countermeasureType.toLowerCase())) {
+        diagnostics.push({
+          line: ship.countermeasureTypeLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$Countermeasure type: "${ship.countermeasureType}" was not found as a weapons.tbl weapon (checked across the active mod's search path)`,
+          severity: "warning",
+        });
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Cross-table checks: a ship class's `+Use Template:` should name a `#Ship Templates`
+ * entry's `$Template:`; `+Use Ship as Template:` should name another ship class's
+ * `$Name:` (confirmed against ship.cpp: `ship_template_lookup()`/`ship_info_lookup_sub()`
+ * respectively - two distinct target tables despite the similar field names).
+ */
+function computeShipTemplateDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let templateTable: Map<string, EffectiveShipTemplateEntry> | null = null;
+  let shipTable: Map<string, EffectiveShipEntry> | null = null;
+
+  for (const ship of ships) {
+    if (ship.useTemplate && ship.useTemplateLine !== null) {
+      try {
+        if (!templateTable) {
+          const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+          templateTable = getEffectiveShipTemplateTable(searchDirs);
+        }
+        if (!templateTable.has(ship.useTemplate.toLowerCase())) {
+          diagnostics.push({
+            line: ship.useTemplateLine,
+            startCol: 0,
+            endCol: 1000,
+            message: `+Use Template: "${ship.useTemplate}" was not found in a #Ship Templates section (checked across the active mod's search path)`,
+            severity: "warning",
+          });
+        }
+      } catch {
+        // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+      }
+    }
+
+    if (ship.useShipAsTemplate && ship.useShipAsTemplateLine !== null) {
+      try {
+        if (!shipTable) {
+          const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+          shipTable = getEffectiveShipTable(searchDirs);
+        }
+        if (!shipTable.has(ship.useShipAsTemplate.toLowerCase())) {
+          diagnostics.push({
+            line: ship.useShipAsTemplateLine,
+            startCol: 0,
+            endCol: 1000,
+            message: `+Use Ship as Template: "${ship.useShipAsTemplate}" was not found as a ships.tbl ship class (checked across the active mod's search path)`,
+            severity: "warning",
+          });
+        }
+      } catch {
+        // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+      }
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
  * Cross-table check: a weapon's `$Damage Type:` should be referenced by at least one
  * armor.tbl `$Damage Type:` entry somewhere in the merged armor table; otherwise the
  * weapon's damage type never gets an armor-specific multiplier applied against it.
@@ -1246,6 +1405,185 @@ function computeDamageTypeDiagnostics(documentUri: string, weapons: WeaponEntryI
       }
     } catch {
       // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Cross-table check: a weapon's OWN `$Armor Type:` (the armor this weapon uses, e.g. for
+ * damage it takes from flak/collisions - distinct from `$Damage Type:` above, the damage
+ * this weapon inflicts) should name an armor.tbl entry. Mirrors
+ * computeArmorTypeDiagnostics() for ships' parallel field.
+ */
+function computeWeaponArmorTypeDiagnostics(documentUri: string, weapons: WeaponEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let armorTable: Map<string, EffectiveArmorEntry> | null = null;
+
+  for (const weapon of weapons) {
+    if (!weapon.armorType || weapon.armorTypeLine === null) {
+      continue;
+    }
+    try {
+      if (!armorTable) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        armorTable = getEffectiveArmorTable(searchDirs);
+      }
+      if (!armorTable.has(weapon.armorType.toLowerCase())) {
+        diagnostics.push({
+          line: weapon.armorTypeLine,
+          startCol: 0,
+          endCol: 1000,
+          message: `$Armor Type: "${weapon.armorType}" was not found in armor.tbl (checked across the active mod's search path)`,
+          severity: "warning",
+        });
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Cross-table check: every `+Armor Type:` nested inside a `$Conditional Impact:` block
+ * should name an armor.tbl entry, or be the literal `"NO ARMOR"` sentinel (confirmed
+ * against weapons.cpp, case-insensitive per the engine's own `stricmp()` check).
+ */
+function computeConditionalImpactArmorDiagnostics(documentUri: string, weapons: WeaponEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let armorTable: Map<string, EffectiveArmorEntry> | null = null;
+
+  for (const weapon of weapons) {
+    for (const ref of weapon.conditionalImpactArmorRefs) {
+      if (ref.value.toLowerCase() === "no armor") {
+        continue;
+      }
+      try {
+        if (!armorTable) {
+          const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+          armorTable = getEffectiveArmorTable(searchDirs);
+        }
+        if (!armorTable.has(ref.value.toLowerCase())) {
+          diagnostics.push({
+            line: ref.line,
+            startCol: 0,
+            endCol: 1000,
+            message: `+Armor Type: "${ref.value}" (inside $Conditional Impact:) was not found in armor.tbl (checked across the active mod's search path)`,
+            severity: "warning",
+          });
+        }
+      } catch {
+        // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+      }
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Cross-table check: every `$substitute:` entry should name a weapons.tbl weapon, or be
+ * the literal `"none"` sentinel (confirmed against weapons.cpp - see
+ * WeaponSubstituteRef's doc comment).
+ */
+function computeWeaponSubstituteDiagnostics(documentUri: string, weapons: WeaponEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let weaponsTable: Map<string, EffectiveWeaponEntry> | null = null;
+
+  for (const weapon of weapons) {
+    if (weapon.substituteRefs.length === 0) {
+      continue;
+    }
+    for (const ref of weapon.substituteRefs) {
+      if (ref.name.toLowerCase() === "none") {
+        continue;
+      }
+      try {
+        if (!weaponsTable) {
+          const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+          weaponsTable = getEffectiveWeaponsTable(searchDirs);
+        }
+        if (!weaponsTable.has(ref.name.toLowerCase())) {
+          diagnostics.push({
+            line: ref.line,
+            startCol: 0,
+            endCol: 1000,
+            message: `$substitute: "${ref.name}" was not found as a weapons.tbl weapon (checked across the active mod's search path)`,
+            severity: "warning",
+          });
+        }
+      } catch {
+        // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+      }
+    }
+  }
+
+  return diagnostics;
+}
+
+/** Human-readable description of a WeaponNameListRef's target table, for diagnostic/hover messages. */
+function describeNameListTarget(kind: WeaponNameListKind): string {
+  switch (kind) {
+    case "ship-type":
+      return "in objecttypes.tbl's #Ship Types section";
+    case "ship-class":
+      return "as a ships.tbl ship class";
+    case "species":
+      return "in species_defs.tbl";
+    case "iff":
+      return "in iff_defs.tbl";
+  }
+}
+
+/** Whether `name` resolves against the effective table matching a WeaponNameListRef's `kind`. */
+function resolveWeaponNameListEntry(searchDirs: string[], kind: WeaponNameListKind, name: string): boolean {
+  switch (kind) {
+    case "ship-type":
+      return getEffectiveObjectTypesTable(searchDirs).has(objectTypesMapKey("ship-types", name));
+    case "ship-class":
+      return getEffectiveShipTable(searchDirs).has(name.toLowerCase());
+    case "species":
+      return getEffectiveSpeciesTable(searchDirs).has(name.toLowerCase());
+    case "iff":
+      return getEffectiveIffTable(searchDirs).has(name.toLowerCase());
+  }
+}
+
+/**
+ * Cross-table check: every name in a weapon's homing-restriction (`+Ship Types:`/
+ * `+Ship Classes:`/`+Species:`/`+IFFs:`, nested in `$Homing:`) or proximity-filter
+ * (`+Proximity Type:`/`+Proximity Class:`/`+Proximity Species:`/`+Proximity IFF:`, nested
+ * in `$Proximity Radius:`/`$MineInfo:`) name-list field should resolve against the
+ * appropriate table - see WeaponNameListRef's doc comment for the full field/target
+ * mapping.
+ */
+function computeWeaponNameListDiagnostics(documentUri: string, weapons: WeaponEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let searchDirs: string[] | null = null;
+
+  for (const weapon of weapons) {
+    for (const ref of weapon.nameListRefs) {
+      try {
+        if (!searchDirs) {
+          searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        }
+        for (const name of ref.names) {
+          if (!resolveWeaponNameListEntry(searchDirs, ref.kind, name)) {
+            diagnostics.push({
+              line: ref.line,
+              startCol: 0,
+              endCol: 1000,
+              message: `+${ref.field}: references "${name}" which was not found ${describeNameListTarget(ref.kind)} (checked across the active mod's search path)`,
+              severity: "warning",
+            });
+          }
+        }
+      } catch {
+        // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+      }
     }
   }
 
@@ -2492,6 +2830,83 @@ connection.onHover((params): Hover | null => {
   }
 
   for (const weapon of weapons) {
+    if (weapon.armorTypeLine === params.position.line && weapon.armorType) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry = getEffectiveArmorTable(searchDirs).get(weapon.armorType.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**$Armor Type: ${weapon.armorType}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**$Armor Type: ${weapon.armorType}** ⚠️\n\nNot found in armor.tbl along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    const substituteRef = weapon.substituteRefs.find((r) => r.line === params.position.line);
+    if (substituteRef) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const isNone = substituteRef.name.toLowerCase() === "none";
+        const entry = isNone ? null : getEffectiveWeaponsTable(searchDirs).get(substituteRef.name.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: isNone
+              ? `**$substitute: none**\n\nNo substitution for this slot.`
+              : entry?.nameLocation
+                ? `**$substitute: ${substituteRef.name}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+                : `**$substitute: ${substituteRef.name}** ⚠️\n\nNot found as a weapons.tbl weapon along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    const conditionalImpactArmorRef = weapon.conditionalImpactArmorRefs.find((r) => r.line === params.position.line);
+    if (conditionalImpactArmorRef) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const isNoArmor = conditionalImpactArmorRef.value.toLowerCase() === "no armor";
+        const entry = isNoArmor ? null : getEffectiveArmorTable(searchDirs).get(conditionalImpactArmorRef.value.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: isNoArmor
+              ? `**+Armor Type: NO ARMOR** (inside $Conditional Impact:)\n\nMatches a target with no armor type set.`
+              : entry?.nameLocation
+                ? `**+Armor Type: ${conditionalImpactArmorRef.value}** ✓ (inside $Conditional Impact:)\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+                : `**+Armor Type: ${conditionalImpactArmorRef.value}** ⚠️ (inside $Conditional Impact:)\n\nNot found in armor.tbl along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    const nameListRef = weapon.nameListRefs.find((r) => r.line === params.position.line);
+    if (nameListRef) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const items = nameListRef.names
+          .map((n) => `\`${n}\`${resolveWeaponNameListEntry(searchDirs, nameListRef.kind, n) ? " ✓" : " ⚠️"}`)
+          .join(", ");
+        return {
+          contents: {
+            kind: "markdown",
+            value: `**+${nameListRef.field}:**\n\n${items}\n\n(checked ${describeNameListTarget(nameListRef.kind)}, across the active mod's search path)`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
     if (weapon.damageTypeLine !== params.position.line || !weapon.damageType) {
       continue;
     }
@@ -2711,6 +3126,57 @@ connection.onHover((params): Hover | null => {
             value: entry?.nameLocation
               ? `**$AI Class: ${ship.aiClass}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
               : `**$AI Class: ${ship.aiClass}** ⚠️\n\nNot found in ai.tbl along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    if (ship.countermeasureTypeLine === params.position.line && ship.countermeasureType) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry = getEffectiveWeaponsTable(searchDirs).get(ship.countermeasureType.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**$Countermeasure type: ${ship.countermeasureType}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**$Countermeasure type: ${ship.countermeasureType}** ⚠️\n\nNot found as a weapons.tbl weapon along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    if (ship.useTemplateLine === params.position.line && ship.useTemplate) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry = getEffectiveShipTemplateTable(searchDirs).get(ship.useTemplate.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**+Use Template: ${ship.useTemplate}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**+Use Template: ${ship.useTemplate}** ⚠️\n\nNot found in a #Ship Templates section along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    if (ship.useShipAsTemplateLine === params.position.line && ship.useShipAsTemplate) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry = getEffectiveShipTable(searchDirs).get(ship.useShipAsTemplate.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**+Use Ship as Template: ${ship.useShipAsTemplate}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**+Use Ship as Template: ${ship.useShipAsTemplate}** ⚠️\n\nNot found as a ships.tbl ship class along the active mod's search path.`,
           },
         };
       } catch {
