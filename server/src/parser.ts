@@ -80,7 +80,15 @@ const MULTILINE_END_MARKERS = new Set(["$end_multi_text", "$end_custom_data"]);
 const MULTITEXT_FIELDS = new Set(["description", "tech description"]);
 
 export function parseTable(text: string): ParseResult {
-  const lines = stripBlockComments(text).split(/\r\n|\r|\n/);
+  // A leading UTF-8 BOM (U+FEFF - common in files saved by Windows editors like
+  // Notepad) isn't stripped by VSCode's document text and isn't a real table
+  // character. Left in place, it hides the FIRST line's leading "#"/"$"/"+"/"@" sigil
+  // from every check below (`line.startsWith("#")` etc.), so a table's own real
+  // `#Section` header goes unrecognized - every field in the file then falls through
+  // to the "outside of any #Section block" loose-section path, even though the file is
+  // a completely normal, correctly-headered table.
+  const withoutBom = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  const lines = stripBlockComments(withoutBom).split(/\r\n|\r|\n/);
   const sections: TableSection[] = [];
   const diagnostics: ParseDiagnostic[] = [];
   let currentSection: TableSection | null = null;

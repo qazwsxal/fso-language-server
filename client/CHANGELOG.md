@@ -8,6 +8,13 @@ Many more ships.tbl/weapons.tbl cross-references, plus three previously-unsuppor
 tables that back some of them - all ground-truthed directly against the FSO C++ source
 rather than guessed:
 
+- Fixed: a table file starting with a UTF-8 byte-order mark (common from Windows editors)
+  had its own `#Section` header silently misread as ordinary content, so every field in
+  the file was incorrectly flagged as "outside of any #Section block".
+- Fixed: a genuinely headerless ssm.tbl/*-ssm.tbm (confirmed against the real engine -
+  unlike rank.tbl, it never has a `#Section` header at all) no longer gets that same
+  "outside of any #Section block" warning on every entry.
+
 - The 3D POF model viewer (F12 and a hover "Open 3D view" link) now also opens from a
   weapon's `$Model file:`, `$Tech Model:`, and `$External Model File:` lines, and a
   ship's `$Cockpit POF file:`, `$POF file Techroom:`, `$POF target file:`, and

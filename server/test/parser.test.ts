@@ -109,6 +109,15 @@ test("captures fields with no enclosing #Section into a loose catch-all instead 
   assert.ok(result.diagnostics.some((d) => /appears outside of any #Section block/.test(d.message)));
 });
 
+test("strips a leading UTF-8 BOM so it doesn't hide the first line's #Section header", () => {
+  const text = "﻿#SPECIES DEFS\n$Species_Name: Terran\n#END";
+  const result = parseTable(text);
+  assert.equal(result.sections.length, 1);
+  assert.equal(result.sections[0].name, "SPECIES DEFS");
+  assert.equal(result.sections[0].entries[0].value, "Terran");
+  assert.ok(!result.diagnostics.some((d) => /appears outside of any #Section block/.test(d.message)));
+});
+
 test("silently skips a legacy [Bracket Header] line rather than flagging it as unrecognized", () => {
   const text = ["[RANK NAMES]", "$Name: Cadet", "#End"].join("\n");
   const result = parseTable(text);

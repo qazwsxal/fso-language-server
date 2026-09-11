@@ -124,6 +124,19 @@ const missionEntriesByUri = new Map<string, MissionEntryInfo>();
 function isMissionFile(uri: string): boolean {
   return /\.(fs2|fc2)$/i.test(uri);
 }
+
+/**
+ * Matches ssm.tbl/*-ssm.tbm - confirmed against hudartillery.cpp's `parse_ssm()` (see
+ * ssmEntries.ts) to be genuinely, unconditionally headerless: unlike rank.tbl (which
+ * OPTIONALLY skips a header, so a real rank.tbl usually has one and the loose-section
+ * warning stays meaningful there), ssm.tbl has no header-handling code at all, so every
+ * real ssm.tbl triggers parser.ts's "outside of any #Section block" warning on its very
+ * first `$SSM:` line - a guaranteed false positive, not an occasional one, so it's
+ * suppressed outright for this one file type below.
+ */
+function isSsmTableFile(uri: string): boolean {
+  return /(^|[\\/])ssm\.tbl$|-ssm\.tbm$/i.test(uri);
+}
 /** Per-document species-entry cache (currently just `$Default IFF:`), keyed by URI. */
 const speciesEntriesByUri = new Map<string, SpeciesEntryInfo[]>();
 
@@ -683,6 +696,7 @@ connection.onDidChangeWatchedFiles(() => {
 function validateAndPublish(document: TextDocument): void {
   const result = parseTable(document.getText());
   const isMission = isMissionFile(document.uri);
+  const isSsmTable = isSsmTableFile(document.uri);
   parsedByUri.set(document.uri, result);
   shipEntriesByUri.set(document.uri, extractShipEntries(result.sections));
   weaponEntriesByUri.set(document.uri, extractWeaponEntries(result.sections));
@@ -728,7 +742,11 @@ function validateAndPublish(document: TextDocument): void {
     // don't close with a literal #End the way every table does. This parser is only used
     // for mission files to grab the #Objects/#Players cross-references below, not to
     // validate mission structure, so none of its own diagnostics apply there.
-    ...(isMission ? [] : result.diagnostics),
+    ...(isMission
+      ? []
+      : isSsmTable
+        ? result.diagnostics.filter((d) => !d.message.endsWith("appears outside of any #Section block"))
+        : result.diagnostics),
     ...schemaDiagnostics,
     ...bankCountDiagnostics,
     ...bankWeaponNameDiagnostics,
