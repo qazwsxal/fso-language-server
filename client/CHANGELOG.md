@@ -8,6 +8,12 @@ Many more ships.tbl/weapons.tbl cross-references, plus three previously-unsuppor
 tables that back some of them - all ground-truthed directly against the FSO C++ source
 rather than guessed:
 
+- New `fsoLsp.validationScope` setting: `"openFiles"` (default, unchanged) validates only
+  documents you have open; `"wholeMod"` also scans every loose `.tbl`/`.tbm` file across
+  the active mod's search path, so cross-reference problems show up in the Problems panel
+  even for files nobody has opened yet. Re-scans automatically when a table file changes
+  on disk.
+
 - Fixed two "outside of any #Section block" false positives:
   - A table file starting with a UTF-8 byte-order mark (common from Windows editors) had
     its own `#Section` header silently misread as ordinary content, so every field in the

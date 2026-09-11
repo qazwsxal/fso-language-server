@@ -92,6 +92,16 @@
           "type": "boolean",
           "default": true,
           "description": "In the effective-definition hover's 'Layers applied' list and field table, strip the longest path prefix shared by every source shown (e.g. a common 'E:\\Games\\Knossos\\FS2\\' folder) so it isn't repeated on every line."
+        },
+        "fsoLsp.validationScope": {
+          "type": "string",
+          "enum": ["openFiles", "wholeMod"],
+          "enumDescriptions": [
+            "Only validate documents you currently have open - the default, cheapest option.",
+            "Also scan every loose .tbl/.tbm file across the active mod's search path (its own tables plus its dependencies'), so cross-reference problems show up in the Problems panel even for files you haven't opened. Re-scans automatically when a table file changes."
+          ],
+          "default": "openFiles",
+          "description": "Which files get diagnostics: just the ones open in the editor, or every table file in the active mod."
         }
       }
     }

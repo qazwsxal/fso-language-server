@@ -1,5 +1,6 @@
 import { fileURLToPath, pathToFileURL } from "url";
 import * as path from "path";
+import * as fs from "fs";
 import {
   createConnection,
   TextDocuments,
@@ -148,9 +149,21 @@ const speciesEntriesByUri = new Map<string, SpeciesEntryInfo[]>();
 let unknownFieldSeverity: UnknownFieldSeverity = "off";
 let trimSharedSourcePrefix = true;
 let hasConfigurationCapability = false;
+let hasWorkspaceFolderCapability = false;
+
+/**
+ * "openFiles" (default) only validates documents the editor actually has open - the
+ * original, cheap behavior. "wholeMod" additionally scans every loose `.tbl`/`.tbm` file
+ * across the active mod's search path (see runWholeModValidation()) so cross-reference
+ * problems show up in the Problems panel even for files nobody has opened yet - useful
+ * before a release, at the cost of one filesystem walk per rescan.
+ */
+type ValidationScope = "openFiles" | "wholeMod";
+let validationScope: ValidationScope = "openFiles";
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
   hasConfigurationCapability = !!params.capabilities.workspace?.configuration;
+  hasWorkspaceFolderCapability = !!params.capabilities.workspace?.workspaceFolders;
   return {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
@@ -159,6 +172,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       documentSymbolProvider: true,
       definitionProvider: true,
       declarationProvider: true,
+      workspace: { workspaceFolders: { supported: true } },
     },
   };
 });
@@ -173,10 +187,140 @@ async function refreshConfiguration(): Promise<void> {
     const severity = config?.unknownFieldSeverity;
     unknownFieldSeverity = severity === "warning" || severity === "error" ? severity : "off";
     trimSharedSourcePrefix = config?.trimSharedSourcePrefix !== false;
+    validationScope = config?.validationScope === "wholeMod" ? "wholeMod" : "openFiles";
   } catch {
     unknownFieldSeverity = "off";
     trimSharedSourcePrefix = true;
+    validationScope = "openFiles";
   }
+}
+
+/**
+ * Every URI `runWholeModValidation()` most recently published diagnostics for, so a
+ * later rescan (or a switch back to "openFiles") knows which now-stale entries to clear
+ * - an LSP diagnostic published for a URI stays shown until something explicitly
+ * republishes an empty array for it, so simply stopping the scan would leave every
+ * whole-mod finding stuck in the Problems panel forever.
+ */
+const wholeModValidatedUris = new Set<string>();
+
+/**
+ * Whether `documents` (the live TextDocuments manager) already has an open document for
+ * `uri`, tolerant of the same Windows drive-letter uri-encoding mismatch `getByUri()`
+ * works around below (a uri this function builds itself via `pathToFileURL().toString()`
+ * doesn't necessarily match the encoding vscode-languageclient used when it told the
+ * server the document was opened). Skipping this normalization would risk the whole-mod
+ * scan treating a genuinely open document as closed on Windows, re-validating it from
+ * stale on-disk content instead of leaving its live diagnostics alone.
+ */
+function isDocumentOpen(uri: string): boolean {
+  if (documents.get(uri)) {
+    return true;
+  }
+  let normalizedTarget: string;
+  try {
+    normalizedTarget = decodeURIComponent(uri).toLowerCase();
+  } catch {
+    return false;
+  }
+  for (const doc of documents.all()) {
+    try {
+      if (decodeURIComponent(doc.uri).toLowerCase() === normalizedTarget) {
+        return true;
+      }
+    } catch {
+      // A uri that fails to percent-decode can't match a well-formed uri either way.
+    }
+  }
+  return false;
+}
+
+/**
+ * Finds every loose `.tbl`/`.tbm` file across a search path's `data/tables` directories -
+ * mirrors listMatchingFiles()'s single-directory `data/tables` scan (see resolver.ts) but
+ * collects every table file rather than ones matching one specific `.tbm` suffix. VP-
+ * packed tables are deliberately out of scope here: a mod under active development (the
+ * case this scan is for) keeps its own tables loose, and enumerating every VP's contents
+ * on top of the loose scan would be a much bigger, slower feature for little real benefit.
+ */
+function findAllLooseTableFiles(searchDirs: string[]): string[] {
+  const files: string[] = [];
+  for (const dir of searchDirs) {
+    const tablesDir = path.join(dir, "data", "tables");
+    try {
+      for (const f of fs.readdirSync(tablesDir)) {
+        if (/\.(tbl|tbm)$/i.test(f)) {
+          files.push(path.join(tablesDir, f));
+        }
+      }
+    } catch {
+      // No loose data/tables directory in this search-path entry - fine, skip it.
+    }
+  }
+  return files;
+}
+
+/**
+ * Scans every workspace folder's active mod for loose `.tbl`/`.tbm` files and validates
+ * each one not already open (an open document's diagnostics are already kept live by
+ * documents.onDidChangeContent below, including any unsaved edits this on-disk read
+ * would miss). No-op when validationScope isn't "wholeMod", or when the client doesn't
+ * support the workspace-folders request at all.
+ */
+async function runWholeModValidation(): Promise<void> {
+  if (validationScope !== "wholeMod" || !hasWorkspaceFolderCapability) {
+    return;
+  }
+
+  const newUris = new Set<string>();
+  try {
+    const folders = await connection.workspace.getWorkspaceFolders();
+    for (const folder of folders ?? []) {
+      let searchDirs: string[];
+      try {
+        searchDirs = buildSearchPath(fileURLToPath(folder.uri));
+      } catch {
+        continue;
+      }
+      for (const filePath of findAllLooseTableFiles(searchDirs)) {
+        const uri = pathToFileURL(filePath).toString();
+        newUris.add(uri);
+        if (isDocumentOpen(uri)) {
+          continue;
+        }
+        let content: string;
+        try {
+          content = fs.readFileSync(filePath, "utf8");
+        } catch {
+          continue;
+        }
+        validateAndPublish(TextDocument.create(uri, "fso-table", 1, content));
+      }
+    }
+  } catch {
+    // Can't enumerate workspace folders this time - leave whatever was already published.
+    return;
+  }
+
+  for (const staleUri of wholeModValidatedUris) {
+    if (!newUris.has(staleUri) && !isDocumentOpen(staleUri)) {
+      connection.sendDiagnostics({ uri: staleUri, diagnostics: [] });
+    }
+  }
+  wholeModValidatedUris.clear();
+  for (const uri of newUris) {
+    wholeModValidatedUris.add(uri);
+  }
+}
+
+/** Clears every diagnostic runWholeModValidation() published for a file that isn't also currently open - used when the scope switches away from "wholeMod". */
+function clearWholeModDiagnostics(): void {
+  for (const uri of wholeModValidatedUris) {
+    if (!isDocumentOpen(uri)) {
+      connection.sendDiagnostics({ uri, diagnostics: [] });
+    }
+  }
+  wholeModValidatedUris.clear();
 }
 
 connection.onInitialized(() => {
@@ -184,13 +328,20 @@ connection.onInitialized(() => {
     for (const document of documents.all()) {
       validateAndPublish(document);
     }
+    void runWholeModValidation();
   });
 });
 
 connection.onDidChangeConfiguration(() => {
+  const previousScope = validationScope;
   void refreshConfiguration().then(() => {
     for (const document of documents.all()) {
       validateAndPublish(document);
+    }
+    if (validationScope === "wholeMod") {
+      void runWholeModValidation();
+    } else if (previousScope === "wholeMod") {
+      clearWholeModDiagnostics();
     }
   });
 });
@@ -654,7 +805,15 @@ documents.onDidClose((e) => {
   weaponEntriesByUri.delete(e.document.uri);
   speciesEntriesByUri.delete(e.document.uri);
   missionEntriesByUri.delete(e.document.uri);
-  connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
+  if (validationScope === "wholeMod" && wholeModValidatedUris.has(e.document.uri)) {
+    // Already covered by the whole-mod scan - re-validate from its on-disk (saved)
+    // content instead of wiping its diagnostics, so closing a file with real problems
+    // doesn't make them vanish from the Problems panel until the next rescan happens to
+    // run for an unrelated reason.
+    void runWholeModValidation();
+  } else {
+    connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
+  }
 });
 
 /**
@@ -691,6 +850,7 @@ connection.onDidChangeWatchedFiles(() => {
   textureNamesSortedCache.clear();
   pofFileIndexCache.clear();
   pofFileNamesSortedCache.clear();
+  void runWholeModValidation();
 });
 
 function validateAndPublish(document: TextDocument): void {
