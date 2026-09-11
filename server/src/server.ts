@@ -26,7 +26,7 @@ import { TextDocument } from "vscode-languageserver-textdocument";
 import { parseTable, ParseResult, ParseDiagnostic, TableSection, LOOSE_SECTION_NAME } from "./parser";
 import { findSchemaForFile, TableSchema } from "./schemas";
 import { validateAgainstSchema, UnknownFieldSeverity } from "./schemaValidator";
-import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef } from "./tableAnalysis/shipEntries";
+import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef, KNOWN_SHIP_FLAGS } from "./tableAnalysis/shipEntries";
 import { buildEffectiveShipTable, EffectiveShipEntry } from "./tableAnalysis/mergedShipTable";
 import { buildEffectiveShipTemplateTable, EffectiveShipTemplateEntry } from "./tableAnalysis/mergedShipTemplateTable";
 import { extractWeaponEntries, WeaponEntryInfo, WeaponTextureRef, WeaponNameListKind } from "./tableAnalysis/weaponEntries";
@@ -458,6 +458,24 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       }
     }
 
+    if (ship.flagsLine === line && ship.flags.length > 0) {
+      const doc = documents.get(documentUri);
+      const token = doc ? findNameListTokenAt(doc, line, params.position.character) : null;
+      // A recognized engine flag (see KNOWN_SHIP_FLAGS) has no table entry to jump to -
+      // only a ship-type name does, so a miss here falls through to null rather than an
+      // error (this is the expected, common case, not a failure).
+      if (!token || !token.name || KNOWN_SHIP_FLAGS.has(token.name.toLowerCase())) {
+        return null;
+      }
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveObjectTypesTable(searchDirs).get(objectTypesMapKey("ship-types", token.name));
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
     const isArmor = ship.armorTypeLine === line && ship.armorType;
     const isShieldArmor = ship.shieldArmorTypeLine === line && ship.shieldArmorType;
     if (!isArmor && !isShieldArmor) {
@@ -685,6 +703,7 @@ function validateAndPublish(document: TextDocument): void {
   const aiClassDiagnostics = computeAiClassDiagnostics(document.uri, ships);
   const explosionAnimationDiagnostics = computeExplosionAnimationDiagnostics(document.uri, ships);
   const targetPriorityGroupsDiagnostics = computeTargetPriorityGroupsDiagnostics(document.uri, ships);
+  const shipFlagsDiagnostics = computeShipFlagsDiagnostics(document.uri, ships);
   const countermeasureTypeDiagnostics = computeCountermeasureTypeDiagnostics(document.uri, ships);
   const shipTemplateDiagnostics = computeShipTemplateDiagnostics(document.uri, ships);
   const shipIffColorDiagnostics = computeShipIffColorDiagnostics(document.uri, ships);
@@ -720,6 +739,7 @@ function validateAndPublish(document: TextDocument): void {
     ...aiClassDiagnostics,
     ...explosionAnimationDiagnostics,
     ...targetPriorityGroupsDiagnostics,
+    ...shipFlagsDiagnostics,
     ...countermeasureTypeDiagnostics,
     ...shipTemplateDiagnostics,
     ...shipIffColorDiagnostics,
@@ -1896,6 +1916,49 @@ function computeExplosionAnimationDiagnostics(documentUri: string, ships: ShipEn
             startCol: 0,
             endCol: 1000,
             message: `$Explosion Animations: references "${name}" which was not found as a fireball.tbl entry (by numeric index or $Unique ID:) along the active mod's search path`,
+            severity: "warning",
+          });
+        }
+      }
+    } catch {
+      // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Cross-table check: every `$Flags:` entry should either be a recognized engine flag
+ * (KNOWN_SHIP_FLAGS - ship.cpp's static `Ship_flags[]` plus its handful of typo/
+ * deprecation aliases) OR name an objecttypes.tbl `#Ship Types` entry - confirmed against
+ * ship.cpp: `parse_ship_values()` checks a `$Flags:` entry against BOTH targets and only
+ * warns ("Bogus string in ship flags") when NEITHER matches. Checking only one target (as
+ * an earlier version of this diagnostic would have) would false-positive on every
+ * legitimate use of the other - see ShipEntryInfo.flags's doc comment.
+ */
+function computeShipFlagsDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let shipTypeNames: Set<string> | null = null;
+
+  for (const ship of ships) {
+    if (ship.flags.length === 0 || ship.flagsLine === null) {
+      continue;
+    }
+    try {
+      if (!shipTypeNames) {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const objectTypesTable = getEffectiveObjectTypesTable(searchDirs);
+        shipTypeNames = new Set(objectTypesDisplayNamesForKind(objectTypesTable, "ship-types").map((n) => n.toLowerCase()));
+      }
+      for (const name of ship.flags) {
+        const lower = name.toLowerCase();
+        if (!KNOWN_SHIP_FLAGS.has(lower) && !shipTypeNames.has(lower)) {
+          diagnostics.push({
+            line: ship.flagsLine,
+            startCol: 0,
+            endCol: 1000,
+            message: `$Flags: "${name}" is not a recognized engine flag and was not found in objecttypes.tbl's #Ship Types section (checked across the active mod's search path) - bogus string in ship flags`,
             severity: "warning",
           });
         }
@@ -3496,6 +3559,34 @@ connection.onHover((params): Hover | null => {
           contents: {
             kind: "markdown",
             value: `**$Target Priority Groups:**\n\n${items}\n\n(checked against objecttypes.tbl's #Target Priorities section along the active mod's search path)`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    if (ship.flagsLine === params.position.line && ship.flags.length > 0) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const objectTypesTable = getEffectiveObjectTypesTable(searchDirs);
+        const shipTypeNames = new Set(objectTypesDisplayNamesForKind(objectTypesTable, "ship-types").map((n) => n.toLowerCase()));
+        const items = ship.flags
+          .map((n) => {
+            const lower = n.toLowerCase();
+            if (KNOWN_SHIP_FLAGS.has(lower)) {
+              return `\`${n}\` ✓ (engine flag)`;
+            }
+            if (shipTypeNames.has(lower)) {
+              return `\`${n}\` ✓ (ship type)`;
+            }
+            return `\`${n}\` ⚠️`;
+          })
+          .join(", ");
+        return {
+          contents: {
+            kind: "markdown",
+            value: `**$Flags:**\n\n${items}\n\n(checked against the engine's recognized flags and objecttypes.tbl's #Ship Types section along the active mod's search path)`,
           },
         };
       } catch {

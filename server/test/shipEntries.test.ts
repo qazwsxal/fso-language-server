@@ -174,6 +174,26 @@ test("extractShipTemplateEntries: reads #Ship Templates entries keyed by $Templa
   assert.equal(templates[1].useTemplateLine, 3);
 });
 
+test("extracts $Flags: as a name list, ship-level only", () => {
+  const text = ["#Ship Classes", "$Name: GTF Ulysses", "$Flags: ( \"fighter\" \"stealth\" \"Gas Miner Type\" )", "#End"].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.deepEqual(ship.flags, ["fighter", "stealth", "Gas Miner Type"]);
+  assert.equal(ship.flagsLine, 2);
+});
+
+test("does not attribute a subsystem's own $Flags: to the ship-level flags list", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$Flags: ( \"fighter\" )",
+    "$Subsystem: turret01, 5, 3",
+    "$Flags: ( \"+noreplace\" )",
+    "#End",
+  ].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.deepEqual(ship.flags, ["fighter"]);
+});
+
 test("extracts $Default Team:", () => {
   const text = ["#Ship Classes", "$Name: GTF Ulysses", "$Default Team: Hostile", "#End"].join("\n");
   const [ship] = extractShipEntries(parseTable(text).sections);

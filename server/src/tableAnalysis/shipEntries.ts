@@ -107,6 +107,18 @@ export interface ShipEntryInfo {
    */
   targetPriorityGroups: string[];
   targetPriorityGroupsLine: number | null;
+  /**
+   * From `$Flags:` (ship-level only, same `$Subsystem:`-scoping caveat as the other
+   * cross-referencing fields above - subsystems have their own, differently-shaped
+   * `$Flags:`). Confirmed against ship.cpp: each list entry is checked against BOTH the
+   * static `Ship_flags[]` enum (see KNOWN_SHIP_FLAGS) AND objecttypes.tbl's `#Ship Types`
+   * section (`ship_type_name_lookup()`) - an entry matching EITHER is accepted; only one
+   * matching neither is a real "Bogus string in ship flags" warning. This dual-target
+   * validation is why `$Flags:` wasn't cross-referenced at all until now - naively
+   * checking only one target would false-positive on every legitimate use of the other.
+   */
+  flags: string[];
+  flagsLine: number | null;
   /** Bitmap/animation-referencing fields, confirmed against ship.cpp's field list. */
   textureRefs: ShipTextureRef[];
   /**
@@ -165,6 +177,76 @@ export interface ShipTemplateEntryInfo {
   useTemplate: string | null;
   useTemplateLine: number | null;
 }
+
+/**
+ * Every string ship.cpp's static `Ship_flags[]` array (`ship.cpp`, ~line 449) accepts as
+ * a `$Flags:` list entry, lowercased - the "recognized engine flag" half of `$Flags:`'s
+ * dual-target validation (see ShipEntryInfo.flags's doc comment). Transcribed directly
+ * from the array's `name` column, including the one entry explicitly marked obsolete
+ * ("ballistic primaries" - still accepted, just deprecated) - deprecation warnings aren't
+ * modeled here, only "recognized at all" is.
+ */
+export const KNOWN_SHIP_FLAGS = new Set([
+  "no_collide",
+  "player_ship",
+  "default_player_ship",
+  "repair_rearm",
+  "cargo",
+  "fighter",
+  "bomber",
+  "transport",
+  "freighter",
+  "capital",
+  "supercap",
+  "drydock",
+  "cruiser",
+  "navbuoy",
+  "sentrygun",
+  "escapepod",
+  "stealth",
+  "no type",
+  "ship copy",
+  "in tech database",
+  "in tech database multi",
+  "don't collide invisible",
+  "big damage",
+  "corvette",
+  "gas miner",
+  "awacs",
+  "knossos",
+  "no_fred",
+  "flash",
+  "surface shields",
+  "show ship",
+  "generate icon",
+  "no weapon damage scaling",
+  "gun convergence",
+  "no thruster geometry noise",
+  "intrinsic no shields",
+  "dynamic primary linking",
+  "no primary linking",
+  "no pain flash",
+  "no ets",
+  "no lighting",
+  "auto spread shields",
+  "model point shields",
+  "repair disabled subsystems",
+  "don't bank when turning",
+  "don't clamp max velocity",
+  "instantaneous acceleration",
+  "large ship deathroll",
+  "disable all generic impact debris",
+  "disable all generic explosion debris",
+  "ballistic primaries",
+  // Typo-tolerant/deprecated aliases checked by separate stricmp() calls right after the
+  // Ship_flags[] loop in parse_ship_values() - "no_collide" itself is already covered
+  // above, so only the additional spellings/strings are listed here.
+  "no-collide",
+  "dont collide invisible",
+  "dont bank when turning",
+  "dont clamp max velocity",
+  "no impact debris",
+]);
 
 const TEXTURE_FIELDS = new Set([
   "shield_icon",
@@ -255,6 +337,7 @@ const HANDLED_TOP_LEVEL_KEYS = new Set([
   "ai class",
   "explosion animations",
   "target priority groups",
+  "flags",
   ...TEXTURE_FIELDS,
   ...SOUND_FIELDS,
 ]);
@@ -303,6 +386,8 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           explosionAnimationsLine: null,
           targetPriorityGroups: [],
           targetPriorityGroupsLine: null,
+          flags: [],
+          flagsLine: null,
           textureRefs: [],
           soundRefs: [],
           miscFieldRefs: [],
@@ -422,6 +507,9 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
       } else if (key === "target priority groups") {
         current.targetPriorityGroups = splitNameList(field.value);
         current.targetPriorityGroupsLine = field.line;
+      } else if (key === "flags") {
+        current.flags = splitNameList(field.value);
+        current.flagsLine = field.line;
       } else if (field.sigil === "$" && !HANDLED_TOP_LEVEL_KEYS.has(key) && field.value.trim()) {
         current.miscFieldRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
       }

@@ -29,4 +29,8 @@ Initial packaging for the VS Code Marketplace. Highlights:
   (a ship's `$Default Team:`), `mflash.tbl` (a weapon's `$Muzzleflash:`), and `ssm.tbl` (a
   weapon's `$SSM:`, by name or numeric index) - each gets Go to Definition, hover, and
   unresolved-reference diagnostics.
+- A ship's `$Flags:` list is now validated too - each entry is checked against the
+  engine's recognized flag set AND objecttypes.tbl's `#Ship Types` section (an entry
+  matching either is fine; only one matching neither is flagged), mirroring the real
+  engine's own dual-target check.
  
