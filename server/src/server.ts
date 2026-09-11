@@ -138,6 +138,27 @@ function isMissionFile(uri: string): boolean {
 function isSsmTableFile(uri: string): boolean {
   return /(^|[\\/])ssm\.tbl$|-ssm\.tbm$/i.test(uri);
 }
+
+/**
+ * Matches two categories of file this parser's `$Field:`/`+Field:`/`#Section` grammar
+ * cannot represent at all, confirmed against the real FSO source - `result.diagnostics`
+ * is pure noise for both, same rationale as the mission-file exemption above:
+ * - scripting.tbl/*-sct.tbm (`code/scripting/scripting.cpp`'s `script_parse_table()`):
+ *   `$Global:`/`$Splash:`/etc. DO use the normal sigil syntax, but their "value" is raw
+ *   Lua source wrapped in Lua's own `[[ ... ]]` long-bracket string literal, which can
+ *   span arbitrarily many lines containing anything (nested quotes, unbalanced parens,
+ *   `--` comments, `$`/`+`/`#`-looking substrings by pure coincidence) - nothing this
+ *   line-oriented parser's multiline-continuation heuristics can track correctly.
+ * - strings.tbl/tstrings.tbl/*-lcl.tbm/*-tlc.tbm (`code/localization/localize.cpp`'s
+ *   `parse_stringstbl_common()`): NOT `$Field:`-shaped at all - after a bare `#default`/
+ *   `#<language>` section tag, every entry is just `<index> "<string>" [offset] [offset]`
+ *   with no sigil whatsoever, so every line in the file fails every check this parser
+ *   knows and gets flagged as unrecognized/outside-any-section.
+ */
+function isUnsupportedGrammarFile(uri: string): boolean {
+  return /(^|[\\/])(scripting|strings|tstrings)\.tbl$|-(sct|lcl|tlc)\.tbm$/i.test(uri);
+}
+
 /** Per-document species-entry cache (currently just `$Default IFF:`), keyed by URI. */
 const speciesEntriesByUri = new Map<string, SpeciesEntryInfo[]>();
 
@@ -249,7 +270,10 @@ function findAllLooseTableFiles(searchDirs: string[]): string[] {
     const tablesDir = path.join(dir, "data", "tables");
     try {
       for (const f of fs.readdirSync(tablesDir)) {
-        if (/\.(tbl|tbm)$/i.test(f)) {
+        // Script/localization tables are never validated (see
+        // isUnsupportedGrammarFile()) - skip reading them here too rather than pay for
+        // a pointless parse.
+        if (/\.(tbl|tbm)$/i.test(f) && !isUnsupportedGrammarFile(f)) {
           files.push(path.join(tablesDir, f));
         }
       }
@@ -854,6 +878,17 @@ connection.onDidChangeWatchedFiles(() => {
 });
 
 function validateAndPublish(document: TextDocument): void {
+  if (isUnsupportedGrammarFile(document.uri)) {
+    // Skip the entire pipeline, not just result.diagnostics - see
+    // isUnsupportedGrammarFile()'s doc comment. Running ship/weapon extraction against
+    // raw Lua or bare-pair strings.tbl content risks its own spurious cross-reference
+    // diagnostics from coincidental matches, on top of the structural noise; nothing in
+    // either file type is a real ship/weapon/etc. entry this project understands, so
+    // there's nothing worth extracting for hover/go-to-definition either.
+    connection.sendDiagnostics({ uri: document.uri, diagnostics: [] });
+    return;
+  }
+
   const result = parseTable(document.getText());
   const isMission = isMissionFile(document.uri);
   const isSsmTable = isSsmTableFile(document.uri);

@@ -162,6 +162,7 @@ export function parseTable(text: string): ParseResult {
       }
 
       let entryValue = value;
+      let entryValueWasSpecialCased = false;
 
       if (needsMultilineContinuation(entryValue)) {
         // Either a quoted string was left open on this line (e.g. `+Description: XSTR("`
@@ -180,6 +181,7 @@ export function parseTable(text: string): ParseResult {
           j++;
         }
         i = j - 1;
+        entryValueWasSpecialCased = true;
       } else if (entryValue.length === 0 && MULTITEXT_FIELDS.has(normalizeKey(key))) {
         // A known F_MULTITEXT field (e.g. `+Description:`) with nothing on its own
         // line: the real value is free text on the following lines, terminated by a
@@ -194,6 +196,25 @@ export function parseTable(text: string): ParseResult {
         }
         entryValue = textLines.join("\n");
         i = j; // land on the sentinel line itself (or past EOF), consumed below
+        entryValueWasSpecialCased = true;
+      }
+
+      if (!entryValueWasSpecialCased) {
+        // A single-line value that's ENTIRELY one quoted token (e.g. `$Species:
+        // "Terran"`) - confirmed against a real Blue Planet bp-main-hall.tbm - should
+        // resolve identically to the unquoted form (`$Species: Terran`): FSO's own
+        // stuff_string()/F_NAME reader accepts a value either bare or quoted and strips
+        // the quotes either way, but this parser's plain line-slicing had no equivalent
+        // step, so a quoted scalar silently carried its literal quote characters into
+        // every downstream comparison (species_defs.tbl lookups, texture/sound index
+        // lookups, ...) and never matched. Scoped to the plain single-line case only -
+        // skipped for the multiline-continuation/multitext branches above, whose
+        // richer values are handled on their own terms and shouldn't have an outer
+        // quote pair stripped as a side effect.
+        const trimmed = entryValue.trim();
+        if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+          entryValue = trimmed.slice(1, -1);
+        }
       }
 
       // A closed multi-line quote is typically immediately followed by its own

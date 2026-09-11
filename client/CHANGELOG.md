@@ -14,6 +14,15 @@ rather than guessed:
   even for files nobody has opened yet. Re-scans automatically when a table file changes
   on disk.
 
+- Fixed a broad false-positive source: a plain single-line field value that's entirely
+  one quoted string (e.g. `$Species: "Terran"`) kept its literal quote characters, so it
+  never matched anything in a cross-reference lookup (species_defs.tbl, texture indexes,
+  ...) even when the reference was perfectly valid. Found via `"wholeMod"` scanning a real
+  Blue Planet install.
+- scripting.tbl/`*-sct.tbm` (embedded Lua) and strings.tbl/tstrings.tbl/`*-lcl.tbm`/
+  `*-tlc.tbm` (a bare `<index> "string"` format, no `$`/`+` fields at all) are no longer
+  validated at all - neither uses this extension's table grammar, so every diagnostic on
+  them was noise.
 - Fixed two "outside of any #Section block" false positives:
   - A table file starting with a UTF-8 byte-order mark (common from Windows editors) had
     its own `#Section` header silently misread as ordinary content, so every field in the

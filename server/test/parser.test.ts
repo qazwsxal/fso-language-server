@@ -182,3 +182,21 @@ test("resumes warning after a real #Section closes and a new sectionless run sta
   const sectionWarnings = result.diagnostics.filter((d) => /appears outside of any #Section block/.test(d.message));
   assert.equal(sectionWarnings.length, 2);
 });
+
+test("strips a single wrapping quote pair from a plain single-line value (real bp-main-hall.tbm $Species: shape)", () => {
+  const text = ["#Ship Classes", '$Species: "Terran"', "#End"].join("\n");
+  const result = parseTable(text);
+  assert.equal(result.sections[0].entries[0].value, "Terran");
+});
+
+test("does not strip quotes from a parenthesized list value, or from a value that merely starts with a quote (XSTR-style)", () => {
+  const text = [
+    "#Ship Classes",
+    '$Flags: ( "player allowed" "in tech database" )',
+    '+Title: XSTR( "Some text", -1 )',
+    "#End",
+  ].join("\n");
+  const result = parseTable(text);
+  assert.equal(result.sections[0].entries[0].value, '( "player allowed" "in tech database" )');
+  assert.equal(result.sections[0].entries[1].value, 'XSTR( "Some text", -1 )');
+});
