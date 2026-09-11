@@ -8,34 +8,38 @@ Many more ships.tbl/weapons.tbl cross-references, plus three previously-unsuppor
 tables that back some of them - all ground-truthed directly against the FSO C++ source
 rather than guessed:
 
-- Fixed: a table file starting with a UTF-8 byte-order mark (common from Windows editors)
-  had its own `#Section` header silently misread as ordinary content, so every field in
-  the file was incorrectly flagged as "outside of any #Section block".
-- Fixed: a genuinely headerless ssm.tbl/*-ssm.tbm (confirmed against the real engine -
-  unlike rank.tbl, it never has a `#Section` header at all) no longer gets that same
-  "outside of any #Section block" warning on every entry.
-
-- The 3D POF model viewer (F12 and a hover "Open 3D view" link) now also opens from a
-  weapon's `$Model file:`, `$Tech Model:`, and `$External Model File:` lines, and a
-  ship's `$Cockpit POF file:`, `$POF file Techroom:`, `$POF target file:`, and
-  `+Generic Debris POF file:` lines - not just a ship's `$Subsystem:`/`$POF file:`.
-  Hovering directly over one of these lines shows a focused status for just that field
-  instead of the full effective-entry dump.
+- Fixed two "outside of any #Section block" false positives:
+  - A table file starting with a UTF-8 byte-order mark (common from Windows editors) had
+    its own `#Section` header silently misread as ordinary content, so every field in the
+    file was incorrectly flagged.
+  - A genuinely headerless ssm.tbl/*-ssm.tbm (confirmed against the real engine - unlike
+    rank.tbl, it never has a `#Section` header at all) no longer gets that same warning on
+    every entry.
+- The 3D POF model viewer (F12 and a hover "Open 3D view" link) now also opens from:
+  - A weapon's `$Model file:`, `$Tech Model:`, and `$External Model File:` lines.
+  - A ship's `$Cockpit POF file:`, `$POF file Techroom:`, `$POF target file:`, and
+    `+Generic Debris POF file:` lines - not just a ship's `$Subsystem:`/`$POF file:`.
+  - Hovering directly over one of these lines shows a focused status for just that field
+    instead of the full effective-entry dump.
 - Go to Definition, hover, and unresolved-reference diagnostics for a batch of previously-
-  untracked cross-references: a weapon's own `$Armor Type:` (distinct from `$Damage
-  Type:`), a weapon's `$substitute:` list, a weapon's `$Homing:`/proximity-detonation
-  ship-type/ship-class/species/IFF restriction lists, a ship's `$Countermeasure type:`,
-  a ship's `$Ship IFF Colors:` `+Seen By:`/`+When IFF Is:`, and a ship's `$Flags:` list
-  (validated against the engine's recognized flag set OR objecttypes.tbl's `#Ship Types`
-  section, mirroring the real engine's own dual-target check so legitimate flags don't
-  false-positive).
+  untracked cross-references:
+  - A weapon's own `$Armor Type:` (distinct from `$Damage Type:`).
+  - A weapon's `$substitute:` list.
+  - A weapon's `$Homing:`/proximity-detonation ship-type/ship-class/species/IFF
+    restriction lists.
+  - A ship's `$Countermeasure type:`.
+  - A ship's `$Ship IFF Colors:` `+Seen By:`/`+When IFF Is:`.
+  - A ship's `$Flags:` list, validated against the engine's recognized flag set OR
+    objecttypes.tbl's `#Ship Types` section (mirroring the real engine's own dual-target
+    check so legitimate flags don't false-positive).
 - Ship-template support: a ship class's `+Use Template:`/`+Use Ship as Template:` now
   resolve against `#Ship Templates` entries (`$Template:`) and other ship classes
   respectively.
-- Three new tables, each backing a cross-reference above: `colors.tbl` (a ship's
-  `$Default Team:`), `mflash.tbl` (a weapon's `$Muzzleflash:`), and `ssm.tbl` (a weapon's
-  `$SSM:`, by name or numeric index) - each gets Go to Definition, hover, and unresolved-
-  reference diagnostics.
+- Three new tables, each backing a cross-reference above:
+  - `colors.tbl` (a ship's `$Default Team:`)
+  - `mflash.tbl` (a weapon's `$Muzzleflash:`)
+  - `ssm.tbl` (a weapon's `$SSM:`, by name or numeric index)
+  - Each gets Go to Definition, hover, and unresolved-reference diagnostics.
 
 ## [0.0.1] - Unreleased
 
