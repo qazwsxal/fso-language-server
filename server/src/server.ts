@@ -394,6 +394,17 @@ function findCrossReferenceDefinition(params: DefinitionParams | DeclarationPara
       }
     }
 
+    const shipIffColorRef = findRefAtLine(ship.iffColorRefs, line);
+    if (shipIffColorRef) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+        const entry = getEffectiveIffTable(searchDirs).get(shipIffColorRef.value.toLowerCase());
+        return entry?.allLocations?.length ? entry.allLocations.map(toDefinitionLocation) : null;
+      } catch {
+        return null;
+      }
+    }
+
     const shipTextureRef = findRefAtLine(ship.textureRefs, line);
     if (shipTextureRef) {
       return resolveTextureDefinition(documentUri, shipTextureRef.value);
@@ -640,6 +651,7 @@ function validateAndPublish(document: TextDocument): void {
   const targetPriorityGroupsDiagnostics = computeTargetPriorityGroupsDiagnostics(document.uri, ships);
   const countermeasureTypeDiagnostics = computeCountermeasureTypeDiagnostics(document.uri, ships);
   const shipTemplateDiagnostics = computeShipTemplateDiagnostics(document.uri, ships);
+  const shipIffColorDiagnostics = computeShipIffColorDiagnostics(document.uri, ships);
   const iffDiagnostics = computeIffDiagnostics(document.uri, species);
   const damageTypeDiagnostics = computeDamageTypeDiagnostics(document.uri, weapons);
   const weaponArmorTypeDiagnostics = computeWeaponArmorTypeDiagnostics(document.uri, weapons);
@@ -671,6 +683,7 @@ function validateAndPublish(document: TextDocument): void {
     ...targetPriorityGroupsDiagnostics,
     ...countermeasureTypeDiagnostics,
     ...shipTemplateDiagnostics,
+    ...shipIffColorDiagnostics,
     ...iffDiagnostics,
     ...damageTypeDiagnostics,
     ...weaponArmorTypeDiagnostics,
@@ -1364,6 +1377,40 @@ function computeShipTemplateDiagnostics(documentUri: string, ships: ShipEntryInf
             startCol: 0,
             endCol: 1000,
             message: `+Use Ship as Template: "${ship.useShipAsTemplate}" was not found as a ships.tbl ship class (checked across the active mod's search path)`,
+            severity: "warning",
+          });
+        }
+      } catch {
+        // Can't resolve a search path for this document (e.g. no mod metadata found) - skip silently.
+      }
+    }
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Cross-table check: every `+Seen By:`/`+When IFF Is:` inside a `$Ship IFF Colors:`/
+ * `$Ship IFF Colours:` block should name an iff_defs.tbl `$IFF Name:` entry (confirmed
+ * against ship.cpp: both resolved via `iff_lookup()`).
+ */
+function computeShipIffColorDiagnostics(documentUri: string, ships: ShipEntryInfo[]): ParseDiagnostic[] {
+  const diagnostics: ParseDiagnostic[] = [];
+  let iffTable: Map<string, EffectiveIffEntry> | null = null;
+
+  for (const ship of ships) {
+    for (const ref of ship.iffColorRefs) {
+      try {
+        if (!iffTable) {
+          const searchDirs = buildSearchPath(fileURLToPath(documentUri));
+          iffTable = getEffectiveIffTable(searchDirs);
+        }
+        if (!iffTable.has(ref.value.toLowerCase())) {
+          diagnostics.push({
+            line: ref.line,
+            startCol: 0,
+            endCol: 1000,
+            message: `+${ref.field}: "${ref.value}" was not found in iff_defs.tbl (checked across the active mod's search path)`,
             severity: "warning",
           });
         }
@@ -3177,6 +3224,24 @@ connection.onHover((params): Hover | null => {
             value: entry?.nameLocation
               ? `**+Use Ship as Template: ${ship.useShipAsTemplate}** ✓\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
               : `**+Use Ship as Template: ${ship.useShipAsTemplate}** ⚠️\n\nNot found as a ships.tbl ship class along the active mod's search path.`,
+          },
+        };
+      } catch {
+        // Fall through to the generic per-line hover below.
+      }
+    }
+
+    const iffColorRef = ship.iffColorRefs.find((r) => r.line === params.position.line);
+    if (iffColorRef) {
+      try {
+        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+        const entry = getEffectiveIffTable(searchDirs).get(iffColorRef.value.toLowerCase());
+        return {
+          contents: {
+            kind: "markdown",
+            value: entry?.nameLocation
+              ? `**+${iffColorRef.field}: ${iffColorRef.value}** ✓ (inside $Ship IFF Colors:)\n\nDefined at:\n\`${describeResolvedSource(entry.nameLocation.resolved)}:${entry.nameLocation.line + 1}\``
+              : `**+${iffColorRef.field}: ${iffColorRef.value}** ⚠️ (inside $Ship IFF Colors:)\n\nNot found in iff_defs.tbl along the active mod's search path.`,
           },
         };
       } catch {

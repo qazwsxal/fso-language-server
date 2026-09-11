@@ -173,3 +173,24 @@ test("extractShipTemplateEntries: reads #Ship Templates entries keyed by $Templa
   assert.equal(templates[1].useTemplate, "FighterBaseTemplate");
   assert.equal(templates[1].useTemplateLine, 3);
 });
+
+test("extracts $Ship IFF Colors:'s +Seen By:/+When IFF Is: as two iff_defs.tbl name refs per occurrence", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$Ship IFF Colors:",
+    "+Seen By: Friendly",
+    "+When IFF Is: Hostile",
+    "+As Color: ( 255 0 0 )",
+    "$Ship IFF Colours:",
+    "+Seen By: Hostile",
+    "+When IFF Is: Friendly",
+    "+As Color: ( 0 255 0 )",
+    "#End",
+  ].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.deepEqual(
+    ship.iffColorRefs.map((r) => `${r.field}=${r.value}@${r.line}`),
+    ["Seen By=Friendly@3", "When IFF Is=Hostile@4", "Seen By=Hostile@7", "When IFF Is=Friendly@8"],
+  );
+});

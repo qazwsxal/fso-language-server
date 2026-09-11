@@ -21,7 +21,8 @@ Initial packaging for the VS Code Marketplace. Highlights:
 - Go to Definition, hover, and unresolved-reference diagnostics for several more cross-
   references: a weapon's own `$Armor Type:`, a weapon's `$substitute:` list, a weapon's
   `$Homing:`/proximity-detonation ship-type/ship-class/species/IFF restriction lists, a
-  ship's `$Countermeasure type:`, and ship-template support - a ship class's
-  `+Use Template:`/`+Use Ship as Template:` now resolve against `#Ship Templates`
-  entries (`$Template:`) and other ship classes respectively.
+  ship's `$Countermeasure type:`, a ship's `$Ship IFF Colors:` `+Seen By:`/`+When IFF
+  Is:`, and ship-template support - a ship class's `+Use Template:`/`+Use Ship as
+  Template:` now resolve against `#Ship Templates` entries (`$Template:`) and other ship
+  classes respectively.
  

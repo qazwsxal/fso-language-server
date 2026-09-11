@@ -142,6 +142,14 @@ export interface ShipEntryInfo {
   /** From `+Use Ship as Template:` (confirmed against ship.cpp: `ship_info_lookup_sub()`) - references ANOTHER ship class's `$Name:` (not a template), which must already be defined earlier in the parse order. Same prelude-only positioning as `useTemplate` above. */
   useShipAsTemplate: string | null;
   useShipAsTemplateLine: number | null;
+  /**
+   * `+Seen By:`/`+When IFF Is:` sub-fields of a repeatable `$Ship IFF Colors:`/
+   * `$Ship IFF Colours:` block (confirmed against ship.cpp: both resolved via
+   * `iff_lookup()`) - each occurrence contributes two iff_defs.tbl name references, one
+   * per field. Reuses ShipTextureRef's shape; matched by key alone regardless of the
+   * enclosing block, same rationale as genericDebrisModelFile above.
+   */
+  iffColorRefs: ShipTextureRef[];
   /** Modular-table-only sentinels (see fso-table-format): only relevant when merging .tbm layers. */
   noCreate: boolean;
   remove: boolean;
@@ -300,6 +308,7 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
           useTemplateLine: null,
           useShipAsTemplate: null,
           useShipAsTemplateLine: null,
+          iffColorRefs: [],
           noCreate: false,
           remove: false,
         };
@@ -339,6 +348,8 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
         } else if (key === "use ship as template" && field.value.trim()) {
           current.useShipAsTemplate = field.value.trim();
           current.useShipAsTemplateLine = field.line;
+        } else if ((key === "seen by" || key === "when iff is") && field.value.trim()) {
+          current.iffColorRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
         }
         continue;
       }
