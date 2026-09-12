@@ -3262,6 +3262,103 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
 /** Matches schemaValidator.ts's exact "out of order" message, capturing the misplaced field, the field it should come at/after, and the enclosing entry's name. */
 const OUT_OF_ORDER_MESSAGE = /^"\$(.+)" is out of the expected field order for .+? \(expected at\/after "\$(.+)"\) in entry ".+"$/;
 
+/** Matches parser.ts's exact "not closed with #End before the next section started" message, capturing the unclosed section's name. */
+const NOT_CLOSED_BEFORE_NEXT_MESSAGE = /^Section "(.+)" was not closed with #End before the next section started$/;
+/** Matches parser.ts's exact "never closed with #End" (EOF) message, capturing the unclosed section's name. */
+const NEVER_CLOSED_MESSAGE = /^Section "(.+)" was never closed with #End$/;
+/** Matches parser.ts's exact stray-#End message (no open section to close). */
+const STRAY_END_MESSAGE = "#End found with no open #Section";
+
+/**
+ * Every distinct "not found"/"could not be resolved" cross-reference diagnostic this
+ * project emits, matched by a distinctive substring of its OWN message text (the same
+ * "couple to the message, not the diagnostic's construction site" tradeoff already
+ * accepted for OUT_OF_ORDER_MESSAGE above) mapped to the exact same name-collecting
+ * function completion already uses for that field - see each rule's matching
+ * computeXDiagnostics()/SINGLE_CROSS_REF_FIELD_SOURCES/LIST_CROSS_REF_FIELD_SOURCES
+ * entry for the FSO source citation behind it. Order matters: a rule higher in this list
+ * wins when a message could match more than one (e.g. the armor.tbl damage-type message
+ * also contains the substring "armor.tbl", so its own, more specific rule must come
+ * before the generic "in armor.tbl" one).
+ */
+const TYPO_LOOKUP_RULES: { pattern: RegExp; lookup: (searchDirs: string[]) => string[] }[] = [
+  {
+    pattern: /is not referenced by any armor\.tbl \$Damage Type: entry/,
+    lookup: (d) => collectDisplayDamageTypes(getEffectiveArmorTable(d)),
+  },
+  { pattern: /in armor\.tbl/, lookup: (d) => Array.from(getEffectiveArmorTable(d).values()).map((e) => e.name) },
+  { pattern: /in species_defs\.tbl/, lookup: (d) => collectDisplaySpeciesNames(getEffectiveSpeciesTable(d)) },
+  { pattern: /in ai\.tbl/, lookup: (d) => collectDisplayAiClassNames(getEffectiveAiClassTable(d)) },
+  { pattern: /in iff_defs\.tbl/, lookup: (d) => collectDisplayIffNames(getEffectiveIffTable(d)) },
+  { pattern: /in colors\.tbl/, lookup: (d) => collectDisplayTeamColorNames(getEffectiveTeamColorTable(d)) },
+  { pattern: /in mflash\.tbl/, lookup: (d) => collectDisplayMflashNames(getEffectiveMflashTable(d)) },
+  { pattern: /in ssm\.tbl/, lookup: (d) => collectDisplaySsmNames(getEffectiveSsmTable(d)) },
+  { pattern: /in a #Ship Templates section/, lookup: (d) => collectDisplayShipTemplateNames(getEffectiveShipTemplateTable(d)) },
+  { pattern: /as a ships\.tbl ship class/, lookup: (d) => collectDisplayShipNames(getEffectiveShipTable(d)) },
+  { pattern: /as a weapons\.tbl weapon|in weapons\.tbl/, lookup: (d) => collectDisplayWeaponNames(getEffectiveWeaponsTable(d)) },
+  { pattern: /as a fireball\.tbl entry/, lookup: (d) => collectFireballUniqueIds(getEffectiveFireballTable(d)) },
+  { pattern: /objecttypes\.tbl's #Ship Types section/, lookup: (d) => objectTypesDisplayNamesForKind(getEffectiveObjectTypesTable(d), "ship-types") },
+  {
+    pattern: /objecttypes\.tbl's #Target Priorities section/,
+    lookup: (d) => objectTypesDisplayNamesForKind(getEffectiveObjectTypesTable(d), "target-priorities"),
+  },
+  { pattern: /in sounds\.tbl's Game Sounds section/, lookup: (d) => soundsDisplayNamesForKind(getEffectiveSoundsTable(d), "game") },
+  { pattern: /texture\/animation ".*" not found/, lookup: (d) => getSortedTextureNames(d) },
+  { pattern: /could not be resolved along the active mod's search path/, lookup: (d) => getSortedPofFileNames(d) },
+];
+
+/** Classic Levenshtein edit distance (case-insensitive), used to decide whether a "did you mean" suggestion is close enough to the typo'd text to be worth offering rather than noise. */
+function levenshteinDistance(a: string, b: string): number {
+  const s = a.toLowerCase();
+  const t = b.toLowerCase();
+  const dp: number[] = Array.from({ length: t.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= s.length; i++) {
+    let prevDiag = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= t.length; j++) {
+      const temp = dp[j];
+      dp[j] = s[i - 1] === t[j - 1] ? prevDiag : 1 + Math.min(prevDiag, dp[j], dp[j - 1]);
+      prevDiag = temp;
+    }
+  }
+  return dp[t.length];
+}
+
+/** The closest candidate to `value` by edit distance, only if it's close enough to be worth suggesting (within a third of the longer string's length, and always allowed at least 1 edit for short strings) - a generous but not indiscriminate threshold, tuned so a genuine typo matches but two unrelated names of similar length don't. */
+function findClosestMatch(value: string, candidates: string[]): string | null {
+  let best: string | null = null;
+  let bestDistance = Infinity;
+  for (const candidate of candidates) {
+    if (candidate.toLowerCase() === value.toLowerCase()) {
+      continue; // Already an exact match somewhere else (case difference) - not what's being asked about here.
+    }
+    const distance = levenshteinDistance(value, candidate);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate;
+    }
+  }
+  if (best === null) {
+    return null;
+  }
+  const threshold = Math.max(1, Math.floor(Math.max(value.length, best.length) / 3));
+  return bestDistance <= threshold ? best : null;
+}
+
+/** The Range of `value`'s own text within `lineText` (quoted or bare) - diagnostics constructed with a whole-line range don't carry this, so it's re-derived from the line text itself. Returns null if the value can't be found verbatim (e.g. the document has already changed since the diagnostic was published). */
+function findValueRangeInLine(lineText: string, line: number, value: string): Range | null {
+  const quotedIdx = lineText.indexOf(`"${value}"`);
+  if (quotedIdx !== -1) {
+    const start = quotedIdx + 1;
+    return { start: { line, character: start }, end: { line, character: start + value.length } };
+  }
+  const bareIdx = lineText.indexOf(value);
+  if (bareIdx !== -1) {
+    return { start: { line, character: bareIdx }, end: { line, character: bareIdx + value.length } };
+  }
+  return null;
+}
+
 /**
  * The full line range a `$`-sigil entry's OWN field-plus-value occupies (see
  * FieldEntry's `endLine` doc comment) EXTENDED to also cover any immediately-following
@@ -3282,95 +3379,227 @@ function fieldBlockRange(section: TableSection, entryIndex: number): { startLine
   return { startLine: entry.line, endLine };
 }
 
+/**
+ * Quick fix for parser.ts's two "unclosed section" diagnostics - inserts a `#End` line
+ * either right before the next `#Section` starts (the "not closed... before the next
+ * section started" case) or at the very end of the file (the "never closed... " EOF
+ * case). Both diagnostics' `range.start.line` is `currentSection.startLine` (parser.ts),
+ * so the unclosed section is found by matching a parsed section whose own `startLine`
+ * equals that line - not by name alone, since two different sections in the same file
+ * could share a name (e.g. two `#Wing Formations` blocks).
+ */
+function buildInsertMissingEndAction(doc: TextDocument, uri: string, diagnostic: LspDiagnostic, parsed: ParseResult): CodeAction | null {
+  const notClosedMatch = NOT_CLOSED_BEFORE_NEXT_MESSAGE.exec(diagnostic.message);
+  const neverClosedMatch = NEVER_CLOSED_MESSAGE.exec(diagnostic.message);
+  const match = notClosedMatch ?? neverClosedMatch;
+  if (!match) {
+    return null;
+  }
+  const sectionName = match[1];
+  const sectionIndex = parsed.sections.findIndex((s) => s.startLine === diagnostic.range.start.line && s.name === sectionName);
+  if (sectionIndex === -1) {
+    return null;
+  }
+  const section = parsed.sections[sectionIndex];
+
+  let insertLine: number;
+  if (notClosedMatch) {
+    // The next section in file order is exactly the one that triggered this diagnostic
+    // (autoCloseSectionsOnNextSection is off, or this section's own close token never
+    // matched) - insert right before it starts.
+    const nextSection = parsed.sections[sectionIndex + 1];
+    if (!nextSection) {
+      return null;
+    }
+    insertLine = nextSection.startLine;
+  } else {
+    // EOF case - append after the last line of the document. Using doc.lineCount (one
+    // past the last real line) rather than the section's own last entry, so this still
+    // works even if the section's content is empty or ends in blank lines.
+    insertLine = doc.lineCount;
+  }
+
+  return {
+    title: `Insert "#End" to close "#${section.name}"`,
+    kind: CodeActionKind.QuickFix,
+    diagnostics: [diagnostic],
+    edit: {
+      changes: {
+        [uri]: [{ range: { start: { line: insertLine, character: 0 }, end: { line: insertLine, character: 0 } }, newText: "#End\n" }],
+      },
+    },
+  };
+}
+
+/** Quick fix for parser.ts's stray "#End found with no open #Section" diagnostic - deletes that one line outright. */
+function buildRemoveStrayEndAction(uri: string, diagnostic: LspDiagnostic): CodeAction | null {
+  if (diagnostic.message !== STRAY_END_MESSAGE) {
+    return null;
+  }
+  const line = diagnostic.range.start.line;
+  return {
+    title: 'Remove this stray "#End"',
+    kind: CodeActionKind.QuickFix,
+    diagnostics: [diagnostic],
+    edit: {
+      changes: { [uri]: [{ range: { start: { line, character: 0 }, end: { line: line + 1, character: 0 } }, newText: "" }] },
+    },
+  };
+}
+
+/**
+ * "Did you mean X?" quick fix for every cross-reference "not found" diagnostic (see
+ * TYPO_LOOKUP_RULES) - re-derives the bad value's own text range from the line (the
+ * diagnostic itself only carries a whole-line range), then offers the closest
+ * real name from the same table completion already resolves against, if it's close
+ * enough by edit distance to be a plausible typo rather than an unrelated name.
+ */
+function buildTypoFixAction(doc: TextDocument, uri: string, diagnostic: LspDiagnostic): CodeAction | null {
+  const rule = TYPO_LOOKUP_RULES.find((r) => r.pattern.test(diagnostic.message));
+  if (!rule) {
+    return null;
+  }
+  const quoted = /"([^"]+)"/.exec(diagnostic.message);
+  if (!quoted) {
+    return null;
+  }
+  const value = quoted[1];
+  if (/^-?\d+$/.test(value)) {
+    // A purely numeric value (e.g. a bare fireball index) isn't a name typo this
+    // mechanism can meaningfully fix - every candidate name would look equally
+    // "close"/"far" by character-edit-distance, which isn't a meaningful signal here.
+    return null;
+  }
+
+  let searchDirs: string[];
+  try {
+    searchDirs = buildSearchPath(fileURLToPath(uri));
+  } catch {
+    return null;
+  }
+  const candidates = rule.lookup(searchDirs);
+  const bestMatch = findClosestMatch(value, candidates);
+  if (!bestMatch) {
+    return null;
+  }
+
+  const line = diagnostic.range.start.line;
+  const lineText = doc.getText({ start: { line, character: 0 }, end: { line: line + 1, character: 0 } }).replace(/\r?\n$/, "");
+  const range = findValueRangeInLine(lineText, line, value);
+  if (!range) {
+    return null;
+  }
+
+  return {
+    title: `Change "${value}" to "${bestMatch}"`,
+    kind: CodeActionKind.QuickFix,
+    diagnostics: [diagnostic],
+    edit: { changes: { [uri]: [{ range, newText: bestMatch }] } },
+  };
+}
+
 connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) {
     return [];
   }
-  const schema = findSchemaForFile(params.textDocument.uri);
-  const parsed = parsedByUri.get(params.textDocument.uri);
-  if (!schema || !parsed) {
-    return [];
-  }
+  const uri = params.textDocument.uri;
+  const schema = findSchemaForFile(uri);
+  const parsed = parsedByUri.get(uri);
 
   const actions: CodeAction[] = [];
 
   for (const diagnostic of params.context.diagnostics) {
-    const match = OUT_OF_ORDER_MESSAGE.exec(diagnostic.message);
-    if (!match) {
-      continue;
-    }
-    const [, misplacedKey, targetKey] = match;
+    if (schema && parsed) {
+      const reorderMatch = OUT_OF_ORDER_MESSAGE.exec(diagnostic.message);
+      if (reorderMatch) {
+        const [, misplacedKey, targetKey] = reorderMatch;
 
-    const section = parsed.sections.find(
-      (s) =>
-        schema.sectionNames.some((n) => n.toLowerCase() === s.name.toLowerCase()) &&
-        s.startLine <= diagnostic.range.start.line &&
-        (s.endLine === null || diagnostic.range.start.line <= s.endLine),
-    );
-    if (!section) {
-      continue;
-    }
+        const section = parsed.sections.find(
+          (s) =>
+            schema.sectionNames.some((n) => n.toLowerCase() === s.name.toLowerCase()) &&
+            s.startLine <= diagnostic.range.start.line &&
+            (s.endLine === null || diagnostic.range.start.line <= s.endLine),
+        );
+        const misplacedIndex = section
+          ? section.entries.findIndex(
+              (e) => e.sigil === "$" && e.line === diagnostic.range.start.line && e.key.toLowerCase() === misplacedKey.toLowerCase(),
+            )
+          : -1;
 
-    const misplacedIndex = section.entries.findIndex(
-      (e) => e.sigil === "$" && e.line === diagnostic.range.start.line && e.key.toLowerCase() === misplacedKey.toLowerCase(),
-    );
-    if (misplacedIndex === -1) {
-      continue;
-    }
+        if (section && misplacedIndex !== -1) {
+          // The target ($lastKey) must be the occurrence WITHIN THE SAME logical entry
+          // (the same $Name:-to-$Name: span) as the misplaced field, and it must appear
+          // before it - schemaValidator.ts only ever sets lastKey from a field it
+          // already accepted while scanning forward through this same entry, so an
+          // earlier occurrence in a DIFFERENT entry (a different ship/weapon) is never
+          // the right target.
+          const entryKeyNormalized = schema.entryKeyField.toLowerCase();
+          let entryStartIndex = 0;
+          for (let i = misplacedIndex - 1; i >= 0; i--) {
+            if (section.entries[i].sigil === "$" && section.entries[i].key.toLowerCase() === entryKeyNormalized) {
+              entryStartIndex = i;
+              break;
+            }
+          }
+          let targetIndex = -1;
+          for (let i = misplacedIndex - 1; i >= entryStartIndex; i--) {
+            if (section.entries[i].sigil === "$" && section.entries[i].key.toLowerCase() === targetKey.toLowerCase()) {
+              targetIndex = i;
+              break;
+            }
+          }
 
-    // The target ($lastKey) must be the occurrence WITHIN THE SAME logical entry (the
-    // same $Name:-to-$Name: span) as the misplaced field, and it must appear before it -
-    // schemaValidator.ts only ever sets lastKey from a field it already accepted while
-    // scanning forward through this same entry, so an earlier occurrence in a
-    // DIFFERENT entry (a different ship/weapon) is never the right target.
-    const entryKeyNormalized = schema.entryKeyField.toLowerCase();
-    let entryStartIndex = 0;
-    for (let i = misplacedIndex - 1; i >= 0; i--) {
-      if (section.entries[i].sigil === "$" && section.entries[i].key.toLowerCase() === entryKeyNormalized) {
-        entryStartIndex = i;
-        break;
+          if (targetIndex !== -1) {
+            const misplacedBlock = fieldBlockRange(section, misplacedIndex);
+            const targetBlock = fieldBlockRange(section, targetIndex);
+            // misplacedBlock.startLine <= targetBlock.endLine should be impossible given
+            // targetIndex < misplacedIndex, but guard against overlapping edits rather
+            // than ever proposing a corrupting one.
+            if (misplacedBlock.startLine > targetBlock.endLine) {
+              const blockText = doc.getText({
+                start: { line: misplacedBlock.startLine, character: 0 },
+                end: { line: misplacedBlock.endLine + 1, character: 0 },
+              });
+              const deleteEdit: TextEdit = {
+                range: { start: { line: misplacedBlock.startLine, character: 0 }, end: { line: misplacedBlock.endLine + 1, character: 0 } },
+                newText: "",
+              };
+              const insertEdit: TextEdit = {
+                range: { start: { line: targetBlock.startLine, character: 0 }, end: { line: targetBlock.startLine, character: 0 } },
+                newText: blockText,
+              };
+              actions.push({
+                title: `Move "$${misplacedKey}" to before "$${targetKey}"`,
+                kind: CodeActionKind.QuickFix,
+                diagnostics: [diagnostic],
+                edit: { changes: { [uri]: [deleteEdit, insertEdit] } },
+              });
+            }
+          }
+        }
+        continue;
       }
     }
-    let targetIndex = -1;
-    for (let i = misplacedIndex - 1; i >= entryStartIndex; i--) {
-      if (section.entries[i].sigil === "$" && section.entries[i].key.toLowerCase() === targetKey.toLowerCase()) {
-        targetIndex = i;
-        break;
+
+    if (parsed) {
+      const insertEndAction = buildInsertMissingEndAction(doc, uri, diagnostic, parsed);
+      if (insertEndAction) {
+        actions.push(insertEndAction);
+        continue;
       }
     }
-    if (targetIndex === -1) {
+
+    const removeStrayEndAction = buildRemoveStrayEndAction(uri, diagnostic);
+    if (removeStrayEndAction) {
+      actions.push(removeStrayEndAction);
       continue;
     }
 
-    const misplacedBlock = fieldBlockRange(section, misplacedIndex);
-    const targetBlock = fieldBlockRange(section, targetIndex);
-    if (misplacedBlock.startLine <= targetBlock.endLine) {
-      // Should be impossible given targetIndex < misplacedIndex, but guard against
-      // overlapping edits rather than ever proposing a corrupting one.
-      continue;
+    const typoAction = buildTypoFixAction(doc, uri, diagnostic);
+    if (typoAction) {
+      actions.push(typoAction);
     }
-
-    const blockText = doc.getText({
-      start: { line: misplacedBlock.startLine, character: 0 },
-      end: { line: misplacedBlock.endLine + 1, character: 0 },
-    });
-
-    const deleteEdit: TextEdit = {
-      range: { start: { line: misplacedBlock.startLine, character: 0 }, end: { line: misplacedBlock.endLine + 1, character: 0 } },
-      newText: "",
-    };
-    const insertEdit: TextEdit = {
-      range: { start: { line: targetBlock.startLine, character: 0 }, end: { line: targetBlock.startLine, character: 0 } },
-      newText: blockText,
-    };
-
-    actions.push({
-      title: `Move "$${misplacedKey}" to before "$${targetKey}"`,
-      kind: CodeActionKind.QuickFix,
-      diagnostics: [diagnostic],
-      edit: { changes: { [params.textDocument.uri]: [deleteEdit, insertEdit] } },
-    });
   }
 
   return actions;
