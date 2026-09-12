@@ -25,6 +25,7 @@ import {
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { parseTable, ParseResult, ParseDiagnostic, TableSection, LOOSE_SECTION_NAME } from "./parser";
+import { parseMenuTable } from "./menuTableParser";
 import { findSchemaForFile, TableSchema } from "./schemas";
 import { validateAgainstSchema, UnknownFieldSeverity } from "./schemaValidator";
 import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef, KNOWN_SHIP_FLAGS } from "./tableAnalysis/shipEntries";
@@ -1074,7 +1075,33 @@ connection.onDidChangeWatchedFiles(() => {
   void runWholeModValidation();
 });
 
+/** Converts this project's internal ParseDiagnostic shape to the LSP wire format - shared by validateAndPublish()'s main pipeline and any early-return branch (e.g. menu.tbl) that publishes its own diagnostics directly. */
+function toLspDiagnostics(diags: ParseDiagnostic[]) {
+  return diags.map((d) => ({
+    severity: d.severity === "error" ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
+    range: {
+      start: { line: d.line, character: d.startCol },
+      end: { line: d.line, character: d.endCol },
+    },
+    message: d.message,
+    source: "fso-lsp",
+  }));
+}
+
+/** menu.tbl (`code/menuui/snazzyui.cpp`'s `read_menu_tbl()`) - see menuTableParser.ts's doc comment for why this needs an entirely separate parser rather than a parseTable() option. */
+function isMenuTableFile(uri: string): boolean {
+  return /(^|[\\/])menu\.tbl$/i.test(uri);
+}
+
 function validateAndPublish(document: TextDocument): void {
+  if (isMenuTableFile(document.uri)) {
+    // Skip the entire $Field:/#Section pipeline - none of it applies (see
+    // menuTableParser.ts's doc comment) - and publish this table's own dedicated
+    // diagnostics instead.
+    connection.sendDiagnostics({ uri: document.uri, diagnostics: toLspDiagnostics(parseMenuTable(document.getText())) });
+    return;
+  }
+
   if (isUnsupportedGrammarFile(document.uri)) {
     // Skip the entire pipeline, not just result.diagnostics - see
     // isUnsupportedGrammarFile()'s doc comment. Running ship/weapon extraction against
