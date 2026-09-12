@@ -122,10 +122,51 @@ export interface ParseTableOptions {
    * "open" is completely normal.
    */
   tolerateUnclosedSectionAtEof?: boolean;
+  /**
+   * Confirmed real shape for credits.tbl/credits-footer.tbl (`credits_parse_table()`):
+   * a fixed handful of optional `$Field:` lines at the very top of the file - not inside
+   * any `#Section`, since real credits.tbl never uses one - followed by completely
+   * unstructured, free-form scroll-credits text running to EOF (names, XSTR() markers
+   * used as literal display text, blank lines, arbitrary punctuation - there's nothing
+   * to extract). The set here lists the recognized leading field names (case-
+   * insensitive, without the `$`/colon); the FIRST line that isn't blank and isn't one
+   * of them switches parsing into "free text" mode for the rest of the file, silencing
+   * every diagnostic rather than flagging each line of real display text as
+   * unrecognized. An empty set (credits-footer.tbl has no leading fields of its own at
+   * all) switches into free text mode immediately, on line 1.
+   */
+  freeTextAfterKnownLeadingFields?: Set<string>;
+  /**
+   * strings.tbl/tstrings.tbl (`code/localization/localize.cpp`'s
+   * `parse_stringstbl_common()`): every entry inside a `#default`/`#<language>` section
+   * is a bare `<index> "<string>" [offset] [offset]` line, with NO `$`/`+`/`@` sigil at
+   * all. When true, a line starting with an optional `-` then digits, whitespace, and a
+   * `"` is recognized (not extracted - there's nothing this project cross-references in
+   * a localization string) instead of being flagged as "Unrecognized line".
+   */
+  allowBareIndexedStrings?: boolean;
+  /**
+   * hud_gauges.tbl (`code/hud/hudparse.cpp`'s `parse_hud_gauges_tbl()`): a `+Custom:`/
+   * `+Scripted Gauge:`/etc. sub-block's own fields (`Origin:`, `Offset:`, `Name:`,
+   * `Text:`, `Gauge Type:`, ...) use a bare `Key: value` shape with NO sigil at all -
+   * confirmed against a real Between the Ashes bta-hdg.tbm. When true, a line matching
+   * that shape (a leading letter, then word/space/quote/slash/dot/hyphen characters,
+   * then a colon) is recognized instead of being flagged, the same "stop the noise,
+   * don't try to extract or order-check it" treatment as `allowBareIndexedStrings`.
+   */
+  allowBareKeyValueLines?: boolean;
 }
 
 export function parseTable(text: string, options: ParseTableOptions = {}): ParseResult {
-  const { autoCloseSectionsOnNextSection = false, tolerateUnclosedSectionAtEof = false } = options;
+  const {
+    autoCloseSectionsOnNextSection = false,
+    tolerateUnclosedSectionAtEof = false,
+    freeTextAfterKnownLeadingFields,
+    allowBareIndexedStrings = false,
+    allowBareKeyValueLines = false,
+  } = options;
+  /** Set once the free-text tail (see `freeTextAfterKnownLeadingFields`'s doc comment) begins - every remaining line is skipped with no further diagnostics or entries. */
+  let inFreeTextTail = false;
   // A leading UTF-8 BOM (U+FEFF - common in files saved by Windows editors like
   // Notepad) isn't stripped by VSCode's document text and isn't a real table
   // character. Left in place, it hides the FIRST line's leading "#"/"$"/"+"/"@" sigil
@@ -165,6 +206,21 @@ export function parseTable(text: string, options: ParseTableOptions = {}): Parse
     const line = stripLineComment(stripVersionTag(rawLine)).trim();
     if (line.length === 0) {
       continue;
+    }
+
+    if (inFreeTextTail) {
+      continue;
+    }
+
+    if (freeTextAfterKnownLeadingFields) {
+      const colonIdx = line.indexOf(":");
+      const key = (line.startsWith("$") ? (colonIdx === -1 ? line.slice(1) : line.slice(1, colonIdx)) : "")
+        .trim()
+        .toLowerCase();
+      if (!line.startsWith("$") || !freeTextAfterKnownLeadingFields.has(key)) {
+        inFreeTextTail = true;
+        continue;
+      }
     }
 
     if (line.startsWith("#")) {
@@ -414,6 +470,49 @@ export function parseTable(text: string, options: ParseTableOptions = {}): Parse
       // not malformed input - just decorative, so it's silently skipped rather than
       // opening a section (matching the real parser's check_for_string()/skip_to_string()
       // treatment: present or absent, parsing continues the same way either side of it).
+      continue;
+    }
+
+    if (allowBareIndexedStrings && /^-?\d+\s*,?\s*"/.test(line)) {
+      // strings.tbl/tstrings.tbl (`code/localization/localize.cpp`'s
+      // `parse_stringstbl_common()`): every entry is a bare `<index>, "<string>"
+      // [offset] [offset]` line with NO `$`/`+`/`@` sigil at all - nothing worth
+      // extracting for this project's purposes (no cross-referencing need), so this
+      // just recognizes the shape well enough to stop flagging every line as
+      // unrecognized rather than trying to capture it as a field. The comma is
+      // optional-but-common: FSO's own stuff_int() explicitly consumes a trailing
+      // comma after the digits (parselo.cpp), so real tables use both styles.
+      let value = line;
+      let j = i + 1;
+      while (j < lines.length && countChar(value, '"') % 2 === 1) {
+        // A real string's content can itself contain a literal newline - `get_string()`
+        // reads raw bytes until the closing `"`, with no per-line grammar of its own -
+        // confirmed against a real Between the Ashes tstrings.tbl entry whose closing
+        // quote lands several lines below its opening one. Deliberately NOT run through
+        // stripLineComment()/stripVersionTag() here: FSO's real strip_comments()
+        // (parselo.cpp) tracks its `in_quote` flag ACROSS the whole file, so a `;`
+        // inside a still-open string is never treated as a comment start - but this
+        // parser's per-line stripLineComment() has no such cross-line memory, so
+        // applying it while a string is open would wrongly truncate a real translated
+        // sentence that happens to contain a semicolon (confirmed against a real
+        // SCPUI-0.9.0 tstrings.tbl entry: "...Nebelgebietes; es kann..." mid-string).
+        value += "\n" + lines[j];
+        j++;
+      }
+      i = j - 1;
+      continue;
+    }
+
+    if (allowBareKeyValueLines && /^[A-Za-z][\w '"/.-]*:/.test(line)) {
+      // hud_gauges.tbl (`code/hud/hudparse.cpp`'s `parse_hud_gauges_tbl()`): a
+      // `+Custom:`/`+Scripted Gauge:`/etc. sub-block's own fields (`Origin:`,
+      // `Offset:`, `Name:`, `Text:`, `Gauge Type:`, ...) use a bare `Key: value` shape
+      // with NO sigil - confirmed against a real Between the Ashes bta-hdg.tbm. As with
+      // the bare indexed strings above, this just recognizes the shape (a leading
+      // letter, then word/space/quote/slash/dot/hyphen characters, then a colon) well
+      // enough to stop flagging it, without trying to extract or order-check it - the
+      // real per-gauge-type field lists run into the dozens and aren't schema-checked
+      // by this project regardless.
       continue;
     }
 

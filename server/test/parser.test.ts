@@ -484,6 +484,98 @@ test("tolerateUnclosedSectionAtEof: a section still open when the file ends is n
   assert.deepEqual(result.diagnostics, []);
 });
 
+test("freeTextAfterKnownLeadingFields: known leading fields still parse normally, then free-form scroll text produces no diagnostics at all (real credits.tbl shape)", () => {
+  const knownFields = new Set(["text scroll rate", "scp credits position"]);
+  const text = [
+    "$Text scroll rate: 1.0",
+    "$SCP Credits position: End",
+    "-----------------------------------------",
+    'XSTR("THANKS AND ACKNOWLEDGMENTS", 510)',
+    "-----------------------------------------",
+    "",
+    'XSTR("Some Contributor", 511)',
+    "#not a real section, just credits text that happens to start with #",
+  ].join("\n");
+  const creditsResult = parseTable(text, { freeTextAfterKnownLeadingFields: knownFields });
+  // credits.tbl genuinely has no #Section header (confirmed against real FSO source and
+  // mod files), so this is the same loose-catch-all "outside of any #Section block"
+  // warning covered by rank.tbl's test above - not a false positive from this option.
+  assert.equal(creditsResult.diagnostics.length, 1);
+  assert.match(creditsResult.diagnostics[0].message, /appears outside of any #Section block/);
+  assert.equal(creditsResult.sections[0].entries.length, 2);
+  assert.equal(creditsResult.sections[0].entries[0].key, "Text scroll rate");
+  assert.equal(creditsResult.sections[0].entries[1].key, "SCP Credits position");
+});
+
+test("freeTextAfterKnownLeadingFields: an empty set switches to free text immediately, on line 1 (real credits-footer.tbl shape)", () => {
+  const text = ["---------------------------------------------------", 'XSTR("THANKS FOR PLAYING!", 9314)', "---"].join(
+    "\n",
+  );
+  const footerResult = parseTable(text, { freeTextAfterKnownLeadingFields: new Set() });
+  assert.deepEqual(footerResult.diagnostics, []);
+  assert.equal(footerResult.sections.length, 0);
+});
+
+test("allowBareIndexedStrings: a bare '<index>, \"<string>\"' line (no sigil) is recognized instead of flagged as unrecognized (real strings.tbl/tstrings.tbl shape - FSO's stuff_int() explicitly consumes the trailing comma)", () => {
+  const text = [
+    "#default",
+    '0, "Player ship changed to %s"',
+    '1, "Changed player target to %s"',
+    '2 "Another string, no comma variant" 0 0',
+    '-3 "A negative index is still valid"',
+    "#German",
+    '1, "Ein String"',
+  ].join("\n");
+  const stringsResult = parseTable(text, {
+    allowBareIndexedStrings: true,
+    autoCloseSectionsOnNextSection: true,
+    tolerateUnclosedSectionAtEof: true,
+  });
+  assert.deepEqual(stringsResult.diagnostics, []);
+});
+
+test("allowBareIndexedStrings: a multi-line string's closing quote is still found even when a continuation line contains a bare ';' (real SCPUI-0.9.0 tstrings.tbl shape - FSO's real strip_comments() tracks its in_quote flag across the whole file, so a ';' inside a still-open string never starts a comment)", () => {
+  const text = [
+    "#default",
+    '172, "Notruf',
+    "",
+    "Hier ein Teil seiner Übertragung; wir haben die Mitteilung bearbeitet.",
+    "",
+    'Granitberg, hier Schwarze Taube. Setze Pharosbojen aus, um Suche zu erleichtern."',
+    "",
+    '173, "Der Rückzug der Allianz"',
+  ].join("\n");
+  const result = parseTable(text, {
+    allowBareIndexedStrings: true,
+    autoCloseSectionsOnNextSection: true,
+    tolerateUnclosedSectionAtEof: true,
+  });
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test("allowBareIndexedStrings: without the option, the same content is flagged as unrecognized (confirms the option isn't accidentally on for every table)", () => {
+  const text = ["#default", '1 "Some string" 0 0'].join("\n");
+  const withoutOptionResult = parseTable(text, { autoCloseSectionsOnNextSection: true, tolerateUnclosedSectionAtEof: true });
+  assert.equal(withoutOptionResult.diagnostics.length, 1);
+  assert.match(withoutOptionResult.diagnostics[0].message, /Unrecognized line/);
+});
+
+test("allowBareKeyValueLines: a bare 'Key: value' line (no sigil) nested inside a real +Custom: block is recognized instead of flagged (real hud_gauges.tbl/bta-hdg.tbm shape)", () => {
+  const text = [
+    "#Gauge Config",
+    "$Name: BtA Custom Gauges",
+    "+Custom:",
+    "	Origin: (0.5, 0.13)",
+    "	Offset: (-270, 0)",
+    '	Text: XSTR("", -1)',
+    "	X Offset: 10",
+    "	Active by default: NO",
+    "#End",
+  ].join("\n");
+  const gaugesResult = parseTable(text, { allowBareKeyValueLines: true });
+  assert.deepEqual(gaugesResult.diagnostics, []);
+});
+
 test("recognizes traitor.tbl's $Multi text:/$Recommendation text: as multi-line fields, not their XSTR content as unrecognized lines (real Between the Ashes traitor.tbl shape)", () => {
   const text = [
     "#Debriefing_info",

@@ -167,67 +167,103 @@ function isMissionFile(uri: string): boolean {
  *   table has never used one) and closed implicitly by the next `$Entry:` or EOF - no
  *   `#End` at all in a real file, though the parser now also accepts one. See
  *   schemas/intel.ts for the full per-entry grammar.
+ *
+ * - help.tbl/`*-hlp.tbm` (`code/gamehelp/contexthelp.cpp`'s `parse_helptbl()`, mainhall
+ *   context-help overlays): genuinely, unconditionally headerless - a sequence of bare
+ *   `$<overlay name>` blocks (no outer `#Section`/`#End` wrapper at all), each ended by
+ *   its own `$end` marker rather than a `#`-prefixed close token. Its `+resolutions`/
+ *   `+TEXT`/`+PLINE`/`+LEFT_BRACKET`/etc. sub-fields have no colon separator
+ *   (`+resolutions 1`, `+TEXT 334 700 XSTR(...)`) - this parser doesn't split those into
+ *   a meaningful key/value pair (the whole remainder becomes one long "key"), but that's
+ *   just imprecise, not a diagnostic-producing error: every line still starts with a
+ *   recognized `$`/`+` sigil, so nothing is flagged as unrecognized. The only real
+ *   false positive was "outside of any #Section block", confirmed against a real
+ *   Between the Ashes bta-hlp.tbm - fixed by including it here instead of the earlier,
+ *   overly broad "this parser can't represent help.tbl at all" exclusion.
  */
 function isOptionallyHeaderlessTableFile(uri: string): boolean {
-  return /(^|[\\/])(ssm|stars|mainhall|nebula|tips|intel|species)\.tbl$|-(ssm|str|hall|intl)\.tbm$/i.test(uri);
+  return /(^|[\\/])(ssm|stars|mainhall|nebula|tips|intel|species|help)\.tbl$|-(ssm|str|hall|intl|hlp)\.tbm$/i.test(uri);
 }
 
 /**
  * Matches categories of file this parser's `$Field:`/`+Field:`/`#Section` grammar
  * cannot represent at all, confirmed against the real FSO source - `result.diagnostics`
- * is pure noise for these, same rationale as the mission-file exemption above. (Not
- * listed here: scripting.tbl/*-sct.tbm, which LOOKS like it belongs in this category -
- * `$Global:`/`$Splash:`/every `#Conditional Hooks` field's "value" is raw Lua source
- * inside a bracket-delimited block, spanning arbitrarily many lines with `$`/`+`/`#`-
- * looking substrings possible by pure coincidence - but parser.ts now specifically
- * recognizes and consumes this shape (see its Lua-chunk-handling branch and
- * `checkLuaChunkFootguns()`), mirroring exactly how FSO's own `alloc_block()` finds the
- * matching close, so it no longer needs excluding. Also not listed here: the whole
- * "implicit section close" family (game_settings.tbl, messages.tbl,
- * post_processing.tbl, ui.tbl, nodemap.tbl, `*-smap.tbm`, props.tbl, traitor.tbl) -
- * their real `$Field:`/`+Subfield:` grammar IS representable, the only issue was
- * section boundaries, which `isImplicitSectionCloseFile()`/`isNeverRequiresEndFile()`
- * below now handle instead of a blanket exclusion.
- * - strings.tbl/tstrings.tbl/*-lcl.tbm/*-tlc.tbm (`code/localization/localize.cpp`'s
- *   `parse_stringstbl_common()`): NOT `$Field:`-shaped at all - after a bare `#default`/
- *   `#<language>` section tag, every entry is just `<index> "<string>" [offset] [offset]`
- *   with no sigil whatsoever, so every line in the file fails every check this parser
- *   knows and gets flagged as unrecognized/outside-any-section.
- * - credits.tbl/*-crd.tbm (`code/menuui/credits.cpp`'s `credits_parse_table()`):
- *   a handful of optional `$Field:` lines at the top (confirmed real, e.g. `$Text scroll
- *   rate:`), then the ENTIRE rest of the file is slurped as raw scroll-credits display
- *   text with no table grammar at all (names, roles, blank lines, bare `XSTR("...", -1)`
- *   markers as literal text) - confirmed against a real Blue Planet credits.tbl that
- *   produced ~300 "Unrecognized line" warnings, one per line of actual credits text.
- *   `credits-footer.tbl` (confirmed against a real Between the Ashes file) is the exact
- *   same shape under a different filename not read by `credits_parse_table()`'s own
- *   hardcoded `"credits.tbl"`/`"*-crd.tbm"` - almost certainly consumed by a mod's own
- *   scripting hook rather than the base engine, but the content shape alone is enough to
- *   know this parser can't represent it either way.
- * - hud_gauges.tbl/*-hdg.tbm (`code/hud/hudparse.cpp`'s `parse_hud_gauges_tbl()`): a
- *   `#Gauge Config` section's `+Custom:`/etc. sub-blocks use a THIRD field convention
- *   this parser has no concept of at all - bare `Key: value` lines with NO `$`/`+`/`@`
- *   sigil whatsoever (confirmed: `optional_string("Origin:")`, `required_string("Name:")`,
- *   at multiple call sites for different gauge types) - every one of those lines fails
- *   every check this parser knows and is flagged as unrecognized. Confirmed against a
- *   real Blue Planet mv_root-hdg.tbm that produced 700+ diagnostics this way. The
- *   existing hudGaugesSchema's own field-order validation is sacrificed along with the
- *   structural diagnostics by this exclusion, but that schema could only ever have
- *   covered this file's top-level `$Field:`s anyway - the bulk of a real hud_gauges.tbm
- *   is exactly the sigil-less content this parser can't represent.
- * - help.tbl/`*-hlp.tbm` (`code/gamehelp/contexthelp.cpp`'s `parse_helptbl()`, mainhall
- *   context-help overlays): a FOURTH field convention - a `$`/`+` sigil immediately
- *   followed by a bare identifier or space-separated numeric arguments with NO colon
- *   separator at all (`+resolutions 1`, `+TEXT 334 700 XSTR(...)`, `+PLINE 6 370 820
- *   ...`) - confirmed against a real Between the Ashes bta-hlp.tbm. This parser's whole
- *   field model assumes a colon splits key from value, so every line here either
- *   misparses or, for the one bare `$<mainhall name>` marker line, trips "outside of any
- *   #Section block" since help.tbl has no header at all either.
+ * is pure noise for these, same rationale as the mission-file exemption above. Nothing
+ * currently matches here: every table this project once excluded for "unrepresentable
+ * grammar" turned out to be representable after a closer look, via one of
+ * `parseTable()`'s options (`isImplicitSectionCloseFile()`/`isNeverRequiresEndFile()`
+ * for a table whose sections close implicitly; `isBareIndexedStringFile()`/
+ * `isBareKeyValueLineFile()`/`freeTextTailForFile()` below for one whose actual field
+ * grammar isn't `$Field:`-shaped at all) rather than a blanket exclusion - kept as an
+ * empty placeholder (matching nothing) so the calling code and its own doc comments
+ * don't need to change if a genuinely unrepresentable table turns up in the future.
  */
-function isUnsupportedGrammarFile(uri: string): boolean {
-  return /(^|[\\/])(strings|tstrings|credits|credits-footer|hud_gauges|help)\.tbl$|-(lcl|tlc|crd|hdg|hlp)\.tbm$/i.test(
-    uri,
-  );
+function isUnsupportedGrammarFile(_uri: string): boolean {
+  return false;
+}
+
+/**
+ * strings.tbl/tstrings.tbl (`code/localization/localize.cpp`'s
+ * `parse_stringstbl_common()`): after a `#Supported Languages` section (real, ordinary
+ * `$Language:`/`+Extension:`/etc. syntax, closed with a real `#End`), every entry inside
+ * a `#default`/`#<language>` section is a bare `<index> "<string>" [offset] [offset]`
+ * line with NO `$`/`+`/`@` sigil at all - passed through to `parseTable()`'s
+ * `allowBareIndexedStrings` option rather than flagging every line as unrecognized.
+ * There's nothing here this project would cross-reference regardless, so no attempt is
+ * made to actually extract the index/string pairs.
+ */
+function isBareIndexedStringFile(uri: string): boolean {
+  return /(^|[\\/])(strings|tstrings)\.tbl$|-(lcl|tlc)\.tbm$/i.test(uri);
+}
+
+/**
+ * hud_gauges.tbl/*-hdg.tbm (`code/hud/hudparse.cpp`'s `parse_hud_gauges_tbl()`): a
+ * `+Custom:`/`+Scripted Gauge:`/etc. sub-block's own fields (`Origin:`, `Offset:`,
+ * `Name:`, `Text:`, `Gauge Type:`, ...) use a bare `Key: value` shape with NO sigil at
+ * all - confirmed against a real Between the Ashes bta-hdg.tbm, which uses this
+ * extensively across dozens of unique field names per gauge type. Passed through to
+ * `parseTable()`'s `allowBareKeyValueLines` option (a generic shape match, not a
+ * per-field allowlist, given how many distinct field names exist across gauge types) -
+ * the rest of hud_gauges.tbl (the enclosing `#Gauge Config` section, `+Custom:` itself)
+ * uses completely ordinary `$`/`+` syntax and needs no special handling.
+ */
+function isBareKeyValueLineFile(uri: string): boolean {
+  return /(^|[\\/])hud_gauges\.tbl$|-hdg\.tbm$/i.test(uri);
+}
+
+/**
+ * credits.tbl/*-crd.tbm (`code/menuui/credits.cpp`'s `credits_parse_table()`): a
+ * handful of optional `$Field:` lines at the top (confirmed real, e.g. `$Text scroll
+ * rate:`), then the ENTIRE rest of the file is slurped as raw scroll-credits display
+ * text with no table grammar at all (names, roles, blank lines, bare `XSTR("...", -1)`
+ * markers as literal text) - confirmed against a real Blue Planet credits.tbl that
+ * would otherwise produce ~300 "Unrecognized line" warnings, one per line of actual
+ * credits text. `credits-footer.tbl` (confirmed against a real Between the Ashes file)
+ * is the exact same free-text-tail shape under a different filename not read by
+ * `credits_parse_table()`'s own hardcoded `"credits.tbl"`/`"*-crd.tbm"` - almost
+ * certainly consumed by a mod's own scripting hook rather than the base engine - except
+ * it has none of credits.tbl's own optional leading fields, so its free text starts
+ * from line 1. Both are passed through to `parseTable()`'s
+ * `freeTextAfterKnownLeadingFields` option; returns `undefined` (not this option at
+ * all) for any other file.
+ */
+function freeTextTailForFile(uri: string): Set<string> | undefined {
+  if (/(^|[\\/])credits\.tbl$|-crd\.tbm$/i.test(uri)) {
+    return new Set([
+      "music",
+      "substitute music",
+      "number of images",
+      "start image index",
+      "text scroll rate",
+      "artworks display time",
+      "artworks fade time",
+      "scp credits position",
+    ]);
+  }
+  if (/(^|[\\/])credits-footer\.tbl$/i.test(uri)) {
+    return new Set();
+  }
+  return undefined;
 }
 
 /**
@@ -264,24 +300,32 @@ function isUnsupportedGrammarFile(uri: string): boolean {
  *   "you've been branded a traitor" debriefing text): its two sections,
  *   `#Debriefing_info` and `#Traitor Overrides`, are BOTH entirely `optional_string`-
  *   gated with NO close token of any kind between them either - the function just falls
- *   straight from one `if (optional_string(...))` block into the next. Also the only one
- *   of this whole family whose LAST section never needs a real `#End` either, not even
- *   at EOF - see `isNeverRequiresEndFile()` below.
+ *   straight from one `if (optional_string(...))` block into the next. Also one of the
+ *   tables whose LAST section never needs a real `#End` either, not even at EOF - see
+ *   `isNeverRequiresEndFile()` below.
+ * - strings.tbl/tstrings.tbl/`*-lcl.tbm`/`*-tlc.tbm` (`code/localization/localize.cpp`'s
+ *   `parse_stringstbl_common()`): each `#default`/`#<language>` section (confirmed via
+ *   `while (!check_for_string("#"))` - the read loop simply stops, with no `#End` check
+ *   of any kind, the moment another `#`-prefixed line appears) runs until the next one
+ *   starts, or EOF for the last language in the file - also in `isNeverRequiresEndFile()`
+ *   below. The earlier, properly-`#End`-closed `#Supported Languages` section (real
+ *   `$Language:`/`+Extension:`/etc. syntax) is unaffected either way, since it's already
+ *   closed via its own real `#End` well before any of this applies.
  */
 function isImplicitSectionCloseFile(uri: string): boolean {
-  return /(^|[\\/])(game_settings|messages|post_processing|ui|nodemap|props|traitor)\.tbl$|-(ui|smap|prp|trtr)\.tbm$/i.test(
+  return /(^|[\\/])(game_settings|messages|post_processing|ui|nodemap|props|traitor|strings|tstrings)\.tbl$|-(ui|smap|prp|trtr|lcl|tlc)\.tbm$/i.test(
     uri,
   );
 }
 
 /**
  * Subset of `isImplicitSectionCloseFile()` whose sections never require a real `#End`
- * at all, not even the very last one - confirmed only for traitor.tbl (see
- * `isImplicitSectionCloseFile()`'s doc comment). Passed through to `parseTable()`'s
- * `tolerateUnclosedSectionAtEof` option.
+ * at all, not even the very last one - confirmed for traitor.tbl and strings.tbl/
+ * tstrings.tbl (see `isImplicitSectionCloseFile()`'s doc comment). Passed through to
+ * `parseTable()`'s `tolerateUnclosedSectionAtEof` option.
  */
 function isNeverRequiresEndFile(uri: string): boolean {
-  return /(^|[\\/])traitor\.tbl$|-trtr\.tbm$/i.test(uri);
+  return /(^|[\\/])(traitor|strings|tstrings)\.tbl$|-(trtr|lcl|tlc)\.tbm$/i.test(uri);
 }
 
 /** Per-document species-entry cache (currently just `$Default IFF:`), keyed by URI. */
@@ -1017,6 +1061,9 @@ function validateAndPublish(document: TextDocument): void {
   const result = parseTable(document.getText(), {
     autoCloseSectionsOnNextSection: isImplicitSectionCloseFile(document.uri),
     tolerateUnclosedSectionAtEof: isNeverRequiresEndFile(document.uri),
+    allowBareIndexedStrings: isBareIndexedStringFile(document.uri),
+    allowBareKeyValueLines: isBareKeyValueLineFile(document.uri),
+    freeTextAfterKnownLeadingFields: freeTextTailForFile(document.uri),
   });
   const isMission = isMissionFile(document.uri);
   const isOptionallyHeaderless = isOptionallyHeaderlessTableFile(document.uri);
