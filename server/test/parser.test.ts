@@ -216,6 +216,194 @@ test("does not treat a bare list following $Name: as a wing-formation value outs
   assert.equal(result.diagnostics.filter((d) => /Unrecognized line/.test(d.message)).length, 1);
 });
 
+test("consumes a multi-line embedded Lua chunk in single brackets without flagging any of its lines (real scripting.tbl/-sct.tbm shape)", () => {
+  const text = [
+    "#Conditional Hooks",
+    "",
+    "$Application: FS2_Open",
+    "",
+    "$On Key Pressed: [",
+    "  if mn.getMissionTime() >= 1 then",
+    "    AbsoluteKeys.add(hv.Key)",
+    "  end",
+    "]",
+    "",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text);
+  assert.deepEqual(result.diagnostics, []);
+  const entries = result.sections[0].entries;
+  assert.equal(entries.length, 2);
+  assert.equal(entries[1].key, "On Key Pressed");
+  assert.ok(entries[1].value.includes("AbsoluteKeys.add(hv.Key)"));
+});
+
+test("finds an embedded Lua chunk's opening bracket even when a blank line separates it from its own field (real Blackwater axmsg-sct.tbm shape)", () => {
+  const text = [
+    "#Conditional Hooks",
+    "$Application: FS2_Open",
+    "",
+    "$On Game Init:",
+    "",
+    "[",
+    "",
+    "axemParse = require \"axParse\"",
+    "]",
+    "",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text);
+  assert.deepEqual(result.diagnostics, []);
+  const entries = result.sections[0].entries;
+  assert.equal(entries.length, 2);
+  assert.equal(entries[1].key, "On Game Init");
+  assert.ok(entries[1].value.includes('axemParse = require "axParse"'));
+});
+
+test("consumes a same-line, single-line embedded Lua chunk", () => {
+  const text = ["#Conditional Hooks", "$On Gameplay Start: [ AbsoluteKeys.reset() ]", "#End"].join("\n");
+  const result = parseTable(text);
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(result.sections[0].entries[0].value, "[ AbsoluteKeys.reset() ]");
+});
+
+test("consumes a double-bracket external Lua filename reference", () => {
+  const text = ["#Global Hooks", "$Global: [[data/scripts/my_hooks.lua]]", "#End"].join("\n");
+  const result = parseTable(text);
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(result.sections[0].entries[0].value, "[[data/scripts/my_hooks.lua]]");
+});
+
+test("reports an error (not silent EOF-swallowing) for a Lua chunk missing its closing bracket", () => {
+  // The unclosed chunk also swallows the real "#End" below while searching for its own
+  // close (matching what FSO's own alloc_block()/required_string("#End") sequence would
+  // do too - it never gets there either), so the enclosing section is left unclosed as
+  // well; both diagnostics are genuine, not a bug in this test's expectations.
+  const text = ["#Conditional Hooks", "$On Key Pressed: [", "  do_something()", "#End"].join("\n");
+  const result = parseTable(text);
+  assert.equal(result.diagnostics.length, 2);
+  assert.ok(result.diagnostics.some((d) => /never closed with a matching/.test(d.message) && d.severity === "error"));
+  assert.ok(result.diagnostics.some((d) => /was never closed with #End/.test(d.message)));
+});
+
+test("warns about a bare ';' inside an embedded Lua chunk silently truncating the rest of the line (real FSO strip_comments() footgun)", () => {
+  const text = ["#Conditional Hooks", "$On Key Pressed: [", "  local x = 5; local y = 10", "]", "#End"].join("\n");
+  const result = parseTable(text);
+  const footguns = result.diagnostics.filter((d) => /silently discarded when this table loads/.test(d.message));
+  assert.equal(footguns.length, 1);
+  assert.equal(footguns[0].severity, "warning");
+  assert.equal(footguns[0].line, 2);
+  // The captured value still only contains what FSO's own engine would actually keep -
+  // "local y = 10" is genuinely gone, matching real (if unfortunate) engine behavior;
+  // the diagnostic above is what tells the user their code was silently cut.
+  assert.ok(!result.sections[0].entries[0].value.includes("local y = 10"));
+});
+
+test("does not warn about a ';' inside a Lua double-quoted string (FSO's own quote-toggle already protects this case)", () => {
+  const text = ["#Conditional Hooks", "$On Key Pressed: [", '  local s = "a;b"', "]", "#End"].join("\n");
+  const result = parseTable(text);
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test("does not warn about a ';' that's already inside a Lua '--' line comment (real BtA flickerships-sct.tbm/movements-sct.tbm shape: old commented-out code ending in a stray ';')", () => {
+  const text = [
+    "#Conditional Hooks",
+    "$On Key Pressed: [",
+    "  break; -- normal Lua, no comment",
+    "  -- vm_vec_normalize(&v1);	--normalize fvec of me",
+    "]",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text);
+  const footguns = result.diagnostics.filter((d) => /silently discarded when this table loads/.test(d.message));
+  // Line index 2 ("break; -- ...") has its ';' BEFORE the "--", so it's still reported
+  // (real code, even though nothing follows here in this example). Line index 3's ';'
+  // comes AFTER its line's own "--", i.e. inside an already-inert Lua comment, so it's
+  // silently skipped - both real shapes, confirmed against real Between the Ashes
+  // scripts.
+  assert.deepEqual(
+    footguns.map((d) => d.line),
+    [2],
+  );
+});
+
+test("warns about a self-contained '/*'..'*/' sequence inside an embedded Lua chunk risking silently eaten code", () => {
+  // The "*/" closes the comment on the same line, so the chunk's own "]" below survives
+  // stripBlockComments() intact and this hits the per-line footgun check specifically
+  // (not the "chunk looks unclosed" case covered by the test below).
+  const text = ["#Conditional Hooks", "$On Key Pressed: [", "  local half = a/*b*/c -- oops, not real Lua", "]", "#End"].join(
+    "\n",
+  );
+  const result = parseTable(text);
+  const footguns = result.diagnostics.filter((d) => /start of a comment anywhere in the file/.test(d.message));
+  assert.equal(footguns.length, 1);
+  assert.equal(footguns[0].severity, "warning");
+});
+
+test("uses softer wording for a ';;FSO x.y.z;;'-gated block comment inside a Lua chunk (real Warmachine mv_dbrs-sct.tbm shape - an intentional version-conditional comment, not a mistake)", () => {
+  const text = [
+    "#Conditional Hooks",
+    "$On Game Init: [",
+    "  -- functions for later sections",
+    "",
+    ";;FSO 20.1.0.20200831;; !*",
+    "  function get_rnd_vector_sphere() end",
+    ";;FSO 20.1.0.20200831;; *!",
+    "]",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text);
+  const footguns = result.diagnostics.filter((d) => /start of a comment anywhere in the file/.test(d.message));
+  const versionGated = result.diagnostics.filter((d) => /version-tag-gated comment block/.test(d.message));
+  assert.equal(footguns.length, 0);
+  assert.equal(versionGated.length, 1);
+  assert.equal(versionGated[0].severity, "warning");
+});
+
+test("does not mistake a ';;FSO x.y.z;;' version tag's own double-semicolons for a bare-';' footgun (real Warmachine mv_dbrs-sct.tbm shape: a whole line prefixed with a version tag to make it version-conditional)", () => {
+  const text = [
+    "#Conditional Hooks",
+    "$On Debris Created: [",
+    ";;FSO 20.1.0.20200731;; \tif not mediavps.debrisOverride then",
+    ";;FSO 20.1.0.20200731;; \t\tlocal debr = mediavps.MV_Debris",
+    ";;FSO 20.1.0.20200731;; \tend",
+    "]",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text);
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test("gives a specific diagnostic when a '/*'/'!*' sequence swallows a Lua chunk's real closing bracket, instead of a generic 'unclosed' error", () => {
+  const text = ["#Conditional Hooks", "$On Key Pressed: [", "  local half = a/*b -- oops, not real Lua", "]", "#End"].join(
+    "\n",
+  );
+  const result = parseTable(text);
+  // Also leaves the enclosing "#Conditional Hooks" section unclosed, since its real
+  // "#End" got swallowed right along with the chunk's closing bracket - see the
+  // "reports an error... missing its closing bracket" test above for the same pattern.
+  assert.equal(result.diagnostics.length, 2);
+  const culprit = result.diagnostics.find((d) => /consumed the rest of this Lua chunk/.test(d.message));
+  assert.ok(culprit);
+  assert.equal(culprit!.severity, "error");
+  assert.equal(culprit!.line, 2);
+});
+
+test("warns when a bracket inside a Lua string desyncs FSO's naive bracket counting from where the Lua code actually ends", () => {
+  const text = [
+    "#Conditional Hooks",
+    "$On Key Pressed: [",
+    "  local s = ']'", // a lone ']' inside a Lua string - FSO's naive scan closes the chunk right here
+    "  do_the_real_work()",
+    "]",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text);
+  const footguns = result.diagnostics.filter((d) => /close it somewhere different/.test(d.message));
+  assert.equal(footguns.length, 1);
+  assert.equal(footguns[0].severity, "warning");
+});
+
 test("does not keep emitting a fresh #Section warning for every field in a genuinely sectionless table (real bp-main-hall.tbm shape)", () => {
   const text = ["$Num Resolutions: 2", "$Main Hall", "+Name: BP1-Start", "+Bitmap: BP1-Mainhall640"].join("\n");
   const result = parseTable(text);

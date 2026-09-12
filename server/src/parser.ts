@@ -88,6 +88,12 @@ export function parseTable(text: string): ParseResult {
   // to the "outside of any #Section block" loose-section path, even though the file is
   // a completely normal, correctly-headered table.
   const withoutBom = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  // Kept alongside the block-comment-stripped `lines` below (same line count/numbering,
+  // since stripBlockComments() preserves line breaks) purely so the embedded-Lua-chunk
+  // handling further down can tell whether a `/*`/`!*` sequence it finds was actually
+  // present in the modder's own source, rather than a sequence stripBlockComments()
+  // already removed by the time `lines` is built - see LUA_CHUNK handling's doc comment.
+  const originalLines = withoutBom.split(/\r\n|\r|\n/);
   const lines = stripBlockComments(withoutBom).split(/\r\n|\r|\n/);
   const sections: TableSection[] = [];
   const diagnostics: ParseDiagnostic[] = [];
@@ -220,6 +226,74 @@ export function parseTable(text: string): ParseResult {
           j++;
         }
         i = j - 1;
+        entryValueWasSpecialCased = true;
+      } else if (
+        isLuaChunkOpener(entryValue) ||
+        (entryValue.length === 0 &&
+          isLuaChunkOpener(peekFirstNonBlankLine(lines, i + 1).text) !== null)
+      ) {
+        // Real grammar (`code/scripting/scripting.cpp`'s `ParseChunkSub()`, used for
+        // every field under scripting.tbl/*-sct.tbm's `#Global Hooks`/`#Conditional
+        // Hooks` sections - confirmed against many real Between the Ashes/Warmachine/
+        // Blackwater files): the value is an embedded Lua chunk, either literal Lua
+        // between a single `[`...`]` pair or an external filename between a double
+        // `[[`...`]]` pair. Found the same way FSO's own `alloc_block()` finds the
+        // matching close - see findNaiveBracketClose()'s doc comment for why that
+        // specific (not quote/comment-aware) algorithm is used rather than a "smarter"
+        // one, and checkLuaChunkFootguns()'s doc comment for the real authoring
+        // mistakes this can silently cause that this parser flags instead of masking.
+        // The open bracket doesn't have to be on the very next line - a real Blackwater
+        // axmsg-sct.tbm puts a blank line between `$On Game Init:` and its own `[`.
+        const openOnOwnLine = entryValue.length === 0;
+        const peeked = openOnOwnLine ? peekFirstNonBlankLine(lines, i + 1) : { line: i, text: entryValue };
+        const openLine = peeked.line;
+        const chunkStartText = peeked.text;
+        const openToken = isLuaChunkOpener(chunkStartText)!;
+        const closeToken = openToken === "[[" ? "]]" : "]";
+
+        const scanLines: string[] = [chunkStartText.slice(openToken.length)];
+        for (let j = openLine + 1; j < lines.length; j++) {
+          scanLines.push(stripLineComment(stripVersionTag(lines[j])));
+        }
+        const scanText = scanLines.join("\n");
+        const closeOffset = findNaiveBracketClose(scanText, openToken, closeToken);
+
+        if (closeOffset === -1) {
+          entryValue = openToken + scanText;
+          i = lines.length - 1;
+          // Before assuming the modder simply forgot the closing bracket, check whether
+          // a stray comment-opener earlier in the chunk swallowed it instead (see
+          // checkLuaChunkFootguns()'s doc comment, footgun 2) - stripBlockComments()
+          // already ran on the whole file before this point, so if that's what
+          // happened, the real close token is gone from `lines`/`scanText` entirely and
+          // this scan could never have found it regardless of the Lua code's own
+          // correctness. `originalLines` still has it, though.
+          const culpritLine = findBlockCommentOpenerLine(originalLines, openLine, lines.length - 1);
+          diagnostics.push(
+            culpritLine === null
+              ? {
+                  line: openLine,
+                  startCol: 0,
+                  endCol: (lines[openLine] || "").length,
+                  message: `This embedded Lua chunk's "${openToken}" is never closed with a matching "${closeToken}" - FSO reports a parse error here ("Unclosed pair of \\"${openToken}\\" and \\"${closeToken}\\"") and everything after it in this file fails to load.`,
+                  severity: "error",
+                }
+              : {
+                  line: culpritLine,
+                  startCol: 0,
+                  endCol: (originalLines[culpritLine] || "").length,
+                  message:
+                    'This line contains a "/*" or "!*" sequence, which FSO treats as the start of a comment - since no matching closer follows, it silently consumed the rest of this Lua chunk (including its real closing bracket) and everything after it in this file, which is why the chunk above looks unclosed. If this wasn\'t meant as a comment, remove or escape it.',
+                  severity: "error",
+                },
+          );
+        } else {
+          const consumed = scanText.slice(0, closeOffset);
+          entryValue = openToken + consumed;
+          const lastConsumedLine = openLine + countChar(consumed, "\n");
+          i = lastConsumedLine;
+          checkLuaChunkFootguns(openToken, openLine, consumed, scanText, closeOffset, originalLines, diagnostics);
+        }
         entryValueWasSpecialCased = true;
       }
 
@@ -484,4 +558,272 @@ function parenBalance(s: string): number {
 /** Whether a field value looks incomplete and needs more lines appended - an open quote (odd count) or an unclosed parenthesized list. */
 function needsMultilineContinuation(value: string): boolean {
   return countChar(value, '"') % 2 === 1 || parenBalance(value) > 0;
+}
+
+/** Whether `value` opens an embedded Lua chunk (see the parseTable() branch that uses this) - a literal `[` for inline Lua, or `[[` for an external filename. Checked in this order since `[[` also matches a naive `startsWith("[")`. */
+function isLuaChunkOpener(value: string): "[[" | "[" | null {
+  if (value.startsWith("[[")) return "[[";
+  if (value.startsWith("[")) return "[";
+  return null;
+}
+
+/**
+ * Scans forward from `fromIndex` for the first line whose comment/version-tag-stripped,
+ * trimmed content is non-empty, skipping blank lines in between - confirmed necessary
+ * against a real Blackwater Operations axmsg-sct.tbm, which puts a genuinely blank line
+ * between `$On Game Init:` (nothing on its own line) and its own opening `[` on the
+ * line after that; checking only the SINGLE next line (as an earlier version of this
+ * function did) missed the chunk entirely, leaving its whole body to be parsed as
+ * ordinary table lines. Returns `{ line: lines.length, text: "" }` if the file ends
+ * first without finding one.
+ */
+function peekFirstNonBlankLine(lines: string[], fromIndex: number): { line: number; text: string } {
+  for (let k = fromIndex; k < lines.length; k++) {
+    const text = stripLineComment(stripVersionTag(lines[k])).trim();
+    if (text.length > 0) {
+      return { line: k, text };
+    }
+  }
+  return { line: lines.length, text: "" };
+}
+
+/**
+ * Mirrors `code/parse/parselo.cpp`'s `alloc_block()` EXACTLY: a raw, syntax-blind
+ * character-by-character scan that treats `openTok`/`closeTok` as plain substrings and
+ * checks for a match at EVERY position (not skipping ahead by the matched length, so a
+ * literal "[[" checked against a single-character `openTok` of "[" counts as two
+ * separate opens) - confirmed directly against the engine's source: it has no quote or
+ * comment awareness of any kind, since the same generic function is also used for
+ * other, non-Lua bracketed blocks. `text` is the content STARTING RIGHT AFTER the
+ * initial open token (which the real engine has already consumed via
+ * `required_string(startstr)` before this scan begins, hence starting `level` at 1
+ * rather than 0). Returns the index in `text` one past the matching close token, or -1
+ * if `text` runs out without `level` returning to 0 - matching the engine's own
+ * "Unclosed pair of ..." parse error, which aborts parsing the rest of the file.
+ */
+function findNaiveBracketClose(text: string, openTok: string, closeTok: string): number {
+  let level = 1;
+  for (let pos = 0; pos < text.length; pos++) {
+    if (text.startsWith(openTok, pos)) {
+      level++;
+    } else if (text.startsWith(closeTok, pos)) {
+      level--;
+    }
+    if (level <= 0) {
+      return pos + closeTok.length;
+    }
+  }
+  return -1;
+}
+
+/**
+ * A Lua-literate approximation of the same scan, used ONLY as a cross-check against
+ * findNaiveBracketClose() for the single-bracket (inline Lua, not external-filename)
+ * case - see checkLuaChunkFootguns(). Unlike the real engine, this skips the contents
+ * of short string literals ('...'/"..." with backslash escapes) and short `--` line
+ * comments before counting '['/']', since those are the two situations where a stray
+ * bracket character inside otherwise-normal Lua can desync from what FSO's own unaware
+ * scan finds. A Lua LONG bracket string/comment (`[[...]]`, `[=[...]=]`) is
+ * deliberately NOT special-cased: it always contributes a perfectly matched, net-zero
+ * pair of literal '['/']' characters no matter how many '=' signs it uses, so counting
+ * its brackets normally (rather than detecting and skipping the whole span) still gives
+ * the right answer with far less code - it only needs to be told apart from a SHORT
+ * `--` comment so that comment-skipping doesn't eat the long form's own opening `[[`
+ * and leave its closing `]]` to be miscounted as two bare, unmatched closes.
+ */
+function findLuaAwareBracketClose(text: string): number {
+  let level = 1;
+  let pos = 0;
+  while (pos < text.length) {
+    const ch = text[pos];
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      pos++;
+      while (pos < text.length && text[pos] !== quote) {
+        pos += text[pos] === "\\" ? 2 : 1;
+      }
+      pos++;
+      continue;
+    }
+    if (text.startsWith("--", pos) && !/^--\[=*\[/.test(text.slice(pos))) {
+      const nl = text.indexOf("\n", pos);
+      pos = nl === -1 ? text.length : nl + 1;
+      continue;
+    }
+    if (ch === "[") {
+      level++;
+    } else if (ch === "]") {
+      level--;
+    }
+    if (level <= 0) {
+      return pos + 1;
+    }
+    pos++;
+  }
+  return -1;
+}
+
+/**
+ * Scans `originalLines[fromLine..toLine]` (the pre-`stripBlockComments()` text - see
+ * `parseTable()`'s own `originalLines`) for a line containing a slash-then-asterisk or
+ * bang-then-asterisk sequence, i.e. a real FSO block-comment opener. Used only to give
+ * a more useful diagnostic when a Lua chunk appears unclosed: if one of these opened
+ * with nothing to close it, `stripBlockComments()` already consumed everything after it
+ * - including the chunk's real closing bracket - before this parser ever got to look
+ * for one, so "you forgot the closing bracket" would be the wrong thing to tell the
+ * modder. Returns the line number of the first match, or null if none is found.
+ */
+function findBlockCommentOpenerLine(originalLines: string[], fromLine: number, toLine: number): number | null {
+  for (let k = fromLine; k <= toLine && k < originalLines.length; k++) {
+    if (originalLines[k].includes("/*") || originalLines[k].includes("!*")) {
+      return k;
+    }
+  }
+  return null;
+}
+
+/**
+ * Finds the column of the first ';' outside a double-quoted string in `line` (mirrors
+ * `stripLineComment()`'s own quote-toggle logic, but reports the position instead of
+ * truncating there), or -1 if none - and also -1 if that ';' comes AFTER a Lua `--`
+ * line-comment marker earlier on the line (outside quotes) that isn't itself the start
+ * of a Lua long comment. In that case FSO's real truncation only deletes text that was
+ * already inert Lua-comment content (confirmed against two real, shipped Between the
+ * Ashes scripts - old commented-out code ending in a stray `;`, e.g. `break;` at the
+ * end of a comment) - a real instance of the underlying footgun, but not one worth
+ * surfacing, since nothing FSO discards there would have executed anyway. A `;` that
+ * appears BEFORE the `--` (i.e. in real, live code on the same line as a trailing
+ * comment) is still reported normally.
+ */
+function findUnquotedSemicolon(line: string): number {
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if (!inQuotes && line.startsWith("--", i) && !/^--\[=*\[/.test(line.slice(i))) {
+      return -1;
+    } else if (ch === ";" && !inQuotes) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * FSO's table-comment stripping (`code/parse/parselo.cpp`'s `strip_comments()`, applied
+ * to the WHOLE file as plain text before any table-specific parsing - including the
+ * Lua-chunk scan above - ever sees it) has no idea some of that text is about to become
+ * a Lua script. Confirmed directly against that function, this creates real, silent-
+ * failure footguns for anyone writing Lua inside a table field:
+ *
+ * 1. A bare `;` OUTSIDE a double-quoted string is treated as "the rest of this line is
+ *    an FSO comment" and silently discarded - including inside a Lua chunk. Lua's own
+ *    optional `;` statement separator, or a `;` inside a Lua SINGLE-quoted string
+ *    (`strip_comments()` only tracks double quotes, since that's the only quote style
+ *    FSO's own table syntax has), triggers this: `local x = 5; local y = 10` silently
+ *    loses `local y = 10` entirely, and `local s = 'a;b'` silently loses `b'` (and the
+ *    closing quote) - both without any error, and the truncated result may still
+ *    happen to look like valid Lua.
+ * 2. A slash immediately followed by an asterisk (or a bang immediately followed by an
+ *    asterisk) are FSO's own (non-Lua) block-comment openers, recognized ANYWHERE in
+ *    the file, including inside embedded Lua source - which never uses either sequence
+ *    itself, but can easily contain one by coincidence: a Lua comment mentioning
+ *    C-style comments, a string literal containing that two-character sequence, or
+ *    simply a division immediately followed by a dereference-style identifier (no
+ *    space between them). If the matching closer isn't nearby, everything up to
+ *    wherever one next appears - possibly much later in the file, in a completely
+ *    unrelated table - silently vanishes too.
+ *
+ * Neither of these is a mistake this extension is making - both mirror confirmed real
+ * engine behavior exactly, via findNaiveBracketClose()/the shared stripLineComment()/
+ * stripBlockComments() this parser already applies to every line - so they can't be
+ * "fixed" here without behaving differently from the game itself on the modder's real
+ * file. What this extension CAN do that the game doesn't is warn about them, since both
+ * are easy to trigger completely by accident while writing Lua (not FSO table syntax)
+ * and silently produce no error message at all from the game.
+ *
+ * A third, narrower check (single-bracket chunks only): compare where FSO's own unaware
+ * scan closed the chunk against where a Lua-literate scan (findLuaAwareBracketClose())
+ * would close it - a mismatch means a stray '['/']' inside a Lua string or short
+ * comment is confusing FSO's own bracket counting into ending the chunk somewhere the
+ * Lua source itself wouldn't.
+ */
+function checkLuaChunkFootguns(
+  openToken: "[" | "[[",
+  openLine: number,
+  /** The chunk's own content, from right after the open token through right after the matching close token - i.e. `scanText.slice(0, naiveCloseOffset)`. Its own line 0 lines up with `openLine` in the file (both already exclude the field's own "$Field: [" prefix and the open token itself). */
+  consumed: string,
+  /** The full remaining document text the close token was searched in (NOT truncated to `consumed`) - needed so the Lua-aware cross-check below can look PAST a premature naive close to find where Lua rules would really end the chunk. */
+  scanText: string,
+  naiveCloseOffset: number,
+  originalLines: string[],
+  diagnostics: ParseDiagnostic[],
+): void {
+  const consumedLines = consumed.split("\n");
+  for (let idx = 0; idx < consumedLines.length; idx++) {
+    const fileLine = openLine + idx;
+    const original = originalLines[fileLine] ?? "";
+
+    // Checked against the ORIGINAL line (minus a leading version tag - see below), not
+    // `consumed`/`consumedLines`: by the time a line reaches `consumed`, it's already
+    // been through the same `stripLineComment()` this parser applies to every other
+    // line, which means a genuine footgun instance has ALREADY had everything from the
+    // ';' onward removed and would never be found by looking at the (already-truncated)
+    // stripped text. `stripVersionTag()` is applied first because a real `;;FSO
+    // x.y.z;;` version tag (confirmed against a real Warmachine mv_dbrs-sct.tbm, which
+    // prefixes several real, working lines with one to make them version-conditional)
+    // is itself built from two double-semicolons - genuinely not a comment-cutting
+    // footgun, since FSO's own `strip_comments()` specifically recognizes and skips
+    // past a matching tag before ever looking for a plain `;` comment.
+    const versionStripped = stripVersionTag(original);
+    const semicolonCol = findUnquotedSemicolon(versionStripped);
+    if (semicolonCol !== -1) {
+      // stripVersionTag() only ever removes a leading prefix, so adding back how much
+      // shorter the result is recovers the correct column in the untouched `original`.
+      const versionTagLength = original.length - versionStripped.length;
+      diagnostics.push({
+        line: fileLine,
+        startCol: semicolonCol + versionTagLength,
+        endCol: original.length,
+        message:
+          'FSO treats everything after this ";" as a comment, even inside an embedded Lua script - it will be silently discarded when this table loads. If this is Lua\'s ";" statement separator or inside a single-quoted string, rewrite this line to avoid a bare ";".',
+        severity: "warning",
+      });
+    }
+
+    if (original.includes("/*") || original.includes("!*")) {
+      // A `;;FSO x.y.z;;` version tag immediately followed by one of these is a real,
+      // intentional pattern (confirmed against a real Warmachine mv_dbrs-sct.tbm): since
+      // a version tag for an incompatible build discards the rest of ITS OWN line but
+      // otherwise has no effect, pairing one with a block-comment opener/closer lets a
+      // modder wrap a whole span of Lua in a comment that only exists on builds where
+      // the tag doesn't match - i.e. "only compile this code on version X and below" (or
+      // above). Softened wording for that case rather than implying a likely mistake.
+      const isVersionGated = /;;\s*FSO\b[^;]*;;\s*(\/\*|!\*)/.test(original);
+      diagnostics.push({
+        line: fileLine,
+        startCol: 0,
+        endCol: original.length,
+        message: isVersionGated
+          ? 'This looks like a version-tag-gated comment block (a ";;FSO x.y.z;;" tag paired with a "/*" or "!*") - a real, intentional way to wrap Lua in a block comment that only applies on certain engine versions. Just confirm the commented-out span - up to the next matching "*/"/"*!" - covers exactly the code you intend, since this parser (and FSO itself) finds that closer with plain text matching, not by understanding Lua.'
+          : 'FSO treats "/*" and "!*" as the start of a comment anywhere in the file, including inside embedded Lua (which never uses either sequence itself). If this wasn\'t meant as a comment, everything up to wherever a matching "*/"/"*!" next appears - possibly much later in this file - may have been silently discarded when this table loaded.',
+        severity: "warning",
+      });
+    }
+  }
+
+  if (openToken === "[") {
+    const luaAwareClose = findLuaAwareBracketClose(scanText);
+    if (luaAwareClose !== -1 && luaAwareClose !== naiveCloseOffset) {
+      diagnostics.push({
+        line: openLine,
+        startCol: 0,
+        endCol: consumedLines[0].length,
+        message:
+          "This Lua chunk contains a '[' or ']' inside a string or comment that makes FSO's own bracket counting (which doesn't understand Lua syntax) close it somewhere different from where the Lua code itself would end - verify this script isn't being truncated or extended unexpectedly when this table loads.",
+        severity: "warning",
+      });
+    }
+  }
 }

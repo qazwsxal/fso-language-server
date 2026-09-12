@@ -173,15 +173,16 @@ function isOptionallyHeaderlessTableFile(uri: string): boolean {
 }
 
 /**
- * Matches two categories of file this parser's `$Field:`/`+Field:`/`#Section` grammar
+ * Matches categories of file this parser's `$Field:`/`+Field:`/`#Section` grammar
  * cannot represent at all, confirmed against the real FSO source - `result.diagnostics`
- * is pure noise for both, same rationale as the mission-file exemption above:
- * - scripting.tbl/*-sct.tbm (`code/scripting/scripting.cpp`'s `script_parse_table()`):
- *   `$Global:`/`$Splash:`/etc. DO use the normal sigil syntax, but their "value" is raw
- *   Lua source wrapped in Lua's own `[[ ... ]]` long-bracket string literal, which can
- *   span arbitrarily many lines containing anything (nested quotes, unbalanced parens,
- *   `--` comments, `$`/`+`/`#`-looking substrings by pure coincidence) - nothing this
- *   line-oriented parser's multiline-continuation heuristics can track correctly.
+ * is pure noise for these, same rationale as the mission-file exemption above. (Not
+ * listed here: scripting.tbl/*-sct.tbm, which LOOKS like it belongs in this category -
+ * `$Global:`/`$Splash:`/every `#Conditional Hooks` field's "value" is raw Lua source
+ * inside a bracket-delimited block, spanning arbitrarily many lines with `$`/`+`/`#`-
+ * looking substrings possible by pure coincidence - but parser.ts now specifically
+ * recognizes and consumes this shape (see its Lua-chunk-handling branch and
+ * `checkLuaChunkFootguns()`), mirroring exactly how FSO's own `alloc_block()` finds the
+ * matching close, so it no longer needs excluding.)
  * - strings.tbl/tstrings.tbl/*-lcl.tbm/*-tlc.tbm (`code/localization/localize.cpp`'s
  *   `parse_stringstbl_common()`): NOT `$Field:`-shaped at all - after a bare `#default`/
  *   `#<language>` section tag, every entry is just `<index> "<string>" [offset] [offset]`
@@ -269,7 +270,7 @@ function isOptionallyHeaderlessTableFile(uri: string): boolean {
  * per-table "this section never closes" rule - excluded like the others above instead.
  */
 function isUnsupportedGrammarFile(uri: string): boolean {
-  return /(^|[\\/])(scripting|strings|tstrings|credits|credits-footer|hud_gauges|game_settings|messages|post_processing|help|ui|nodemap|props|traitor)\.tbl$|-(sct|lcl|tlc|crd|hdg|hlp|ui|smap|prp|trtr)\.tbm$/i.test(
+  return /(^|[\\/])(strings|tstrings|credits|credits-footer|hud_gauges|game_settings|messages|post_processing|help|ui|nodemap|props|traitor)\.tbl$|-(lcl|tlc|crd|hdg|hlp|ui|smap|prp|trtr)\.tbm$/i.test(
     uri,
   );
 }
