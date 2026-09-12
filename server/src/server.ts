@@ -30,7 +30,7 @@ import {
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { parseTable, ParseResult, ParseDiagnostic, TableSection, LOOSE_SECTION_NAME } from "./parser";
 import { parseMenuTable } from "./menuTableParser";
-import { findSchemaForFile, TableSchema } from "./schemas";
+import { findSchemaForFile, TableSchema, allFieldNames } from "./schemas";
 import { validateAgainstSchema, UnknownFieldSeverity } from "./schemaValidator";
 import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef, KNOWN_SHIP_FLAGS } from "./tableAnalysis/shipEntries";
 import { buildEffectiveShipTable, collectDisplayShipNames, EffectiveShipEntry } from "./tableAnalysis/mergedShipTable";
@@ -2732,7 +2732,7 @@ function computeSoundDiagnostics(documentUri: string, ships: ShipEntryInfo[], we
  */
 /**
  * Whether `line` falls inside the current entry's nested scope (e.g. past a ship's
- * first `$Subsystem:` line) for `schema` - `schema.fieldOrder` is a purely top-level
+ * first `$Subsystem:` line) for `schema` - `schema.fields` is a purely top-level
  * field list (see TableSchema's `nestedScopeStartField` doc comment: schemaValidator.ts
  * itself stops order-checking once this field is seen, precisely because field names can
  * legitimately repeat with a different, block-local meaning past that point), so
@@ -2782,8 +2782,8 @@ function isCursorInsideNestedScope(uri: string, schema: TableSchema, line: numbe
   return insideNestedScope;
 }
 
-function schemaFieldCompletions(schemaFieldOrder: string[], range: Range): CompletionItem[] {
-  return schemaFieldOrder.map((field) => ({
+function schemaFieldCompletions(fieldNames: string[], range: Range): CompletionItem[] {
+  return fieldNames.map((field) => ({
     label: `${field}:`,
     kind: CompletionItemKind.Field,
     textEdit: { range, newText: `${field}: ` },
@@ -3231,21 +3231,22 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
 
   const fieldNameMatch = /^\s*[$+@](\S*)$/.exec(linePrefix);
   if (fieldNameMatch) {
-    // A schema's fieldOrder is a flat, sigil-agnostic list (see TableSchema's doc
-    // comment - `+Subfield` entries aren't tracked separately from top-level `$Field`
-    // ones at all), and schemaFieldCompletions()'s newText never hardcodes a sigil of
-    // its own - it just fills in "Name: " after whatever sigil the user already typed.
-    // Offering the same list regardless of which of $/+/@ triggered this is therefore
-    // strictly better than the old $-only trigger (typing "+" or "@" got zero
-    // suggestions before), even though it can't yet tell a real "+Subfield" apart from a
-    // top-level "$Field" within that list.
+    // A schema's `fields` is a flat, sigil-agnostic list (see TableSchema's doc comment -
+    // `+Subfield` entries aren't tracked separately from top-level `$Field` ones at all),
+    // and schemaFieldCompletions()'s newText never hardcodes a sigil of its own - it just
+    // fills in "Name: " after whatever sigil the user already typed. Offering the same
+    // list regardless of which of $/+/@ triggered this is therefore strictly better than
+    // the old $-only trigger (typing "+" or "@" got zero suggestions before), even though
+    // it can't yet tell a real "+Subfield" apart from a top-level "$Field" within that
+    // list. allFieldNames() includes `unordered` fields too, so a field exempted from
+    // order-checking (e.g. ai_profiles.tbl's) still completes.
     const schema = findSchemaForFile(params.textDocument.uri);
     if (schema && !isCursorInsideNestedScope(params.textDocument.uri, schema, params.position.line)) {
       const range: Range = {
         start: { line: params.position.line, character: params.position.character - fieldNameMatch[1].length },
         end: params.position,
       };
-      return schemaFieldCompletions(schema.fieldOrder, range);
+      return schemaFieldCompletions(allFieldNames(schema.fields), range);
     }
   }
 

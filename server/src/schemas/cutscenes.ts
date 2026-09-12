@@ -17,5 +17,5 @@ export const cutscenesSchema: TableSchema = {
   fileMatch: [/(^|[\\/])cutscenes\.tbl$/i, /-csn\.tbm$/i],
   sectionNames: ["Cutscenes"],
   entryKeyField: "Filename",
-  fieldOrder: ["Filename", "Name", "Description", "cd", "Always Viewable", "Never Viewable", "Custom data"],
+  fields: ["Filename", "Name", "Description", "cd", "Always Viewable", "Never Viewable", "Custom data"],
 };

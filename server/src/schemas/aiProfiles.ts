@@ -1,4 +1,4 @@
-import { TableSchema } from "./types";
+import { SchemaField, TableSchema } from "./types";
 
 /**
  * ai_profiles.tbl / *-aip.tbm schema.
@@ -9,24 +9,18 @@ import { TableSchema } from "./types";
  * "Name", which meant the order validator's `entryKeyFieldSeen` guard silently skipped
  * every real ai_profiles.tbl entirely (never matched, never flagged anything).
  *
- * Every other field lives in `unorderedFields`, not `fieldOrder`: `ai_profiles.cpp`'s own
- * source comment says outright that "they're all optional and can be in any order",
- * and the parser is written accordingly (a retry loop that re-scans for the next
- * matching field, rather than one straight-through sequential pass like ships.tbl's).
- * Putting them in `fieldOrder` instead would have swapped one kind of noise for a worse
- * one - "unrecognized field" false positives for a real, comprehensive Blue Planet
- * ai_profiles.tbm (398 of them) traded for "out of order" false positives on the exact
- * same file, since a real file is free to use a different order than any single list
- * this schema could assert. See `unorderedFields`'s doc comment in schemas/types.ts.
+ * Every other field is marked `unordered` (see `SchemaField`'s doc comment in
+ * schemas/types.ts), not left as a plain ordered name: `ai_profiles.cpp`'s own source
+ * comment says outright that "they're all optional and can be in any order", and the
+ * parser is written accordingly (a retry loop that re-scans for the next matching field,
+ * rather than one straight-through sequential pass like ships.tbl's). Order-checking them
+ * instead would have swapped one kind of noise for a worse one - "unrecognized field"
+ * false positives for a real, comprehensive Blue Planet ai_profiles.tbm (398 of them)
+ * traded for "out of order" false positives on the exact same file, since a real file is
+ * free to use a different order than any single list this schema could assert.
  */
-export const aiProfilesSchema: TableSchema = {
-  name: "ai_profiles.tbl",
-  fileMatch: [/(^|[\\/])ai_profiles\.tbl$/i, /-aip\.tbm$/i],
-  sectionNames: ["AI Profiles"],
-  entryKeyField: "Profile Name",
-  fieldOrder: ["Profile Name", "Description"],
-  unorderedFields: [
-    "Default Profile",
+const UNORDERED_FIELD_NAMES: string[] = [
+  "Default Profile",
     "Player Afterburner Recharge Scale",
     "Max Beam Friendly Fire Damage",
     "Max Weapon Friendly Fire Damage",
@@ -213,5 +207,16 @@ export const aiProfilesSchema: TableSchema = {
     "fix big ship waypoint completion",
     "fix shockwave expiring before dealing damage",
     "fix fighter/bomber AI recovers after engines repaired",
+];
+
+export const aiProfilesSchema: TableSchema = {
+  name: "ai_profiles.tbl",
+  fileMatch: [/(^|[\\/])ai_profiles\.tbl$/i, /-aip\.tbm$/i],
+  sectionNames: ["AI Profiles"],
+  entryKeyField: "Profile Name",
+  fields: [
+    "Profile Name",
+    "Description",
+    ...UNORDERED_FIELD_NAMES.map((name): SchemaField => ({ name, unordered: true })),
   ],
 };

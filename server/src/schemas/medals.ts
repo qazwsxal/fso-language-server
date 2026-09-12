@@ -8,7 +8,7 @@ import { TableSchema } from "./types";
  * The wrong suffix meant listMatchingFiles() would never find a single real medals.tbl
  * .tbm across any real mod, silently merging nothing.
  *
- * fieldOrder extended (previously just `Name`/`Bitmap`/`Num Mods`) after a real Between
+ * fields extended (previously just `Name`/`Bitmap`/`Num Mods`) after a real Between
  * the Ashes medals.tbl (a "badge" medal using the `+Num Kills:` kill-count block) got
  * false "rank.tbl field, not recognized in medals.tbl - possibly misplaced" warnings on
  * `$Promotion Text:` - it's a genuine `medals.cpp` field too, real (if unusually) nested
@@ -22,7 +22,7 @@ export const medalsSchema: TableSchema = {
   fileMatch: [/(^|[\\/])medals\.tbl$/i, /-mdl\.tbm$/i],
   sectionNames: ["Medals"],
   entryKeyField: "Name",
-  fieldOrder: [
+  fields: [
     "Name",
     "Alt Name",
     "Bitmap",

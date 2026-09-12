@@ -10,7 +10,7 @@ import { TableSchema } from "./types";
  * `+Weapon Class Flags:`/`+Object Type:`, not order-checked here), so this schema only
  * covers `#Ship Types` entries in any real depth.
  *
- * fieldOrder is a mechanical, in-source-order extraction of `#Ship Types` entry parsing
+ * fields is a mechanical, in-source-order extraction of `#Ship Types` entry parsing
  * (`ship.cpp`'s ship-type parser, ~line 5850-6025 - objecttypes.tbl has no dedicated
  * .cpp of its own). `Target Priority Groups`/`Explosion Animations`/`Skip Death Roll
  * Percent Chance`/`Vaporize Percent Chance` are genuinely shared with ships.tbl under
@@ -24,7 +24,7 @@ export const objectTypesSchema: TableSchema = {
   fileMatch: [/(^|[\\/])objecttypes\.tbl$/i, /-obt\.tbm$/i],
   sectionNames: ["Target Priorities", "Ship Types"],
   entryKeyField: "Name",
-  fieldOrder: [
+  fields: [
     "Name",
     "Target Priority Groups",
     "Counts for Alone",

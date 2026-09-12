@@ -9,7 +9,7 @@ import { TableSchema } from "./types";
  * Default Ship Flags2. `+Sees <Team> As:`/`+Accessibility Sees <Team> As:`/`+Hotkey
  * Team:` are `+`-sigil sub-fields, not order-checked. `$Traitor IFF:`/`$Accessibility
  * Supported:` are global (not per-IFF) fields that precede the first entry, in that
- * order - added to the front of `fieldOrder` after real Blue Planet/Between the Ashes
+ * order - added to the front of `fields` after real Blue Planet/Between the Ashes
  * iff_defs.tbl files flagged them as unrecognized under `unknownFieldSeverity`.
  */
 export const iffDefsSchema: TableSchema = {
@@ -17,7 +17,7 @@ export const iffDefsSchema: TableSchema = {
   fileMatch: [/(^|[\\/])iff_defs\.tbl$/i, /-iff\.tbm$/i],
   sectionNames: ["IFFs"],
   entryKeyField: "IFF Name",
-  fieldOrder: [
+  fields: [
     "Traitor IFF",
     "Accessibility Supported",
     "IFF Name",

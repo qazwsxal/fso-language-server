@@ -9,7 +9,7 @@ import { TableSchema } from "./types";
  * parse_aitbl)`. The wrong suffix meant listMatchingFiles() would never find a single
  * real ai.tbl .tbm across any real mod, silently merging nothing.
  *
- * fieldOrder below is a mechanical, in-source-order extraction of every `$Field:`
+ * fields below is a mechanical, in-source-order extraction of every `$Field:`
  * literal read by `parse_ai_class()` (aicode.cpp:732-950), replacing an earlier
  * best-effort guess that only covered `Accuracy`/`Evasion`/`Courage`/`Patience` - a real
  * Blue Planet ai.tbl flagged 270 diagnostics under `unknownFieldSeverity` before this
@@ -23,7 +23,7 @@ export const aiClassesSchema: TableSchema = {
   fileMatch: [/(^|[\\/])ai\.tbl$/i, /-aic\.tbm$/i],
   sectionNames: ["AI Classes"],
   entryKeyField: "Name",
-  fieldOrder: [
+  fields: [
     "Name",
     "accuracy",
     "evasion",

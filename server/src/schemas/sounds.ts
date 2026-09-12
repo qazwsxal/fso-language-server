@@ -19,5 +19,5 @@ export const soundsSchema: TableSchema = {
   fileMatch: [/(^|[\\/])sounds\.tbl$/i, /-snd\.tbm$/i],
   sectionNames: ["Game Sounds Start", "Interface Sounds Start", "Flyby Sounds Start", "Sound Environments Start"],
   entryKeyField: "Name",
-  fieldOrder: ["Name", "Filename", "Template"],
+  fields: ["Name", "Filename", "Template"],
 };

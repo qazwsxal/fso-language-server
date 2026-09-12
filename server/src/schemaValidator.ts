@@ -1,5 +1,5 @@
 import { ParseDiagnostic, Severity, TableSection } from "./parser";
-import { TableSchema, allSchemas } from "./schemas";
+import { TableSchema, allSchemas, allFieldNames, orderedFieldNames } from "./schemas";
 
 /** How unrecognized `$Field:` keys (not known to ANY schema) should be reported. "off" keeps the original silent behavior. */
 export type UnknownFieldSeverity = "off" | Severity;
@@ -16,8 +16,7 @@ export type UnknownFieldSeverity = "off" | Severity;
 const knownFieldOwners: Map<string, Set<string>> = (() => {
   const owners = new Map<string, Set<string>>();
   for (const schema of allSchemas) {
-    const allKeys = [...schema.fieldOrder, ...(schema.unorderedFields ?? [])];
-    for (const key of new Set(allKeys.map(normalize))) {
+    for (const key of new Set(allFieldNames(schema.fields).map(normalize))) {
       const set = owners.get(key) ?? new Set<string>();
       set.add(schema.name);
       owners.set(key, set);
@@ -48,8 +47,10 @@ export function validateAgainstSchema(
 ): ParseDiagnostic[] {
   const diagnostics: ParseDiagnostic[] = [];
   const orderIndex = new Map<string, number>();
-  schema.fieldOrder.forEach((key, i) => orderIndex.set(normalize(key), i));
-  const unorderedKeys = new Set((schema.unorderedFields ?? []).map(normalize));
+  orderedFieldNames(schema.fields).forEach((key, i) => orderIndex.set(normalize(key), i));
+  const unorderedKeys = new Set(
+    schema.fields.filter((f): f is { name: string; unordered: true } => typeof f !== "string").map((f) => normalize(f.name)),
+  );
 
   for (const section of sections) {
     if (!schema.sectionNames.some((n) => normalize(n) === normalize(section.name))) {

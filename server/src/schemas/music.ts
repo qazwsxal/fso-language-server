@@ -9,5 +9,5 @@ export const musicSchema: TableSchema = {
   fileMatch: [/(^|[\\/])music\.tbl$/i, /-mus\.tbm$/i],
   sectionNames: ["Soundtracks"],
   entryKeyField: "Name",
-  fieldOrder: ["Name", "Album"],
+  fields: ["Name", "Album"],
 };

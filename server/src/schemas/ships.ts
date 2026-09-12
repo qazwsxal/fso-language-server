@@ -74,7 +74,7 @@ import { TableSchema } from "./types";
  *
  * A further pass (weapons.tbl's `@Laser Bitmap:` autocomplete regression fix) audited
  * `parse_ship()`/`parse_ship_values()` in `code/ship/ship.cpp` for the same category of
- * bug: fieldOrder now ALSO drives field-name completion (server.ts's
+ * bug: fields now ALSO drives field-name completion (server.ts's
  * `schemaFieldCompletions()`), so a real `+`/`@` field this list never listed was
  * invisible to autocomplete even though `schemaValidator.ts` never order-checked it
  * either way. Added, all confirmed directly against source and interleaved at their
@@ -100,7 +100,7 @@ export const shipsSchema: TableSchema = {
   fileMatch: [/(^|[\\/])ships\.tbl$/i, /-shp\.tbm$/i],
   sectionNames: ["Ship Classes"],
   entryKeyField: "Name",
-  fieldOrder: [
+  fields: [
     "Name",
     "Use Template",
     "Use Ship as Template",

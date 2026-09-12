@@ -34,5 +34,5 @@ export const intelSchema: TableSchema = {
   fileMatch: [/(^|[\\/])intel\.tbl$/i, /(^|[\\/])species\.tbl$/i, /-intl\.tbm$/i],
   sectionNames: ["Intel", LOOSE_SECTION_NAME],
   entryKeyField: "Entry",
-  fieldOrder: ["Entry", "Name", "Anim", "AlwaysInTechRoom", "Description", "Custom data"],
+  fields: ["Entry", "Name", "Anim", "AlwaysInTechRoom", "Description", "Custom data"],
 };

@@ -13,12 +13,12 @@ import { TableSchema } from "./types";
  * known limitation of the schema shape rather than a fresh guess.
  *
  * `Unique ID` itself is real and OPTIONAL, always parsed right BEFORE `$Name:` on a
- * real entry (`fireballs.cpp`) - putting it in `fieldOrder` ahead of `Name` would only
- * be safe for the FIRST entry in a section: `validateAgainstSchema()`'s order-reset
- * only fires on `entryKeyField` ("Name"), so `$Unique ID:` on every later entry would
- * still be compared against the PREVIOUS entry's highest field index and almost always
- * flagged "out of order". Listed in `unorderedFields` instead (see its doc comment in
- * schemas/types.ts) so it's recognized without that risk - confirmed against a real
+ * real entry (`fireballs.cpp`) - ordering it ahead of `Name` would only be safe for the
+ * FIRST entry in a section: `validateAgainstSchema()`'s order-reset only fires on
+ * `entryKeyField` ("Name"), so `$Unique ID:` on every later entry would still be compared
+ * against the PREVIOUS entry's highest field index and almost always flagged "out of
+ * order". Marked `unordered` instead (see `SchemaField`'s doc comment in schemas/types.ts)
+ * so it's recognized (and still completes) without that risk - confirmed against a real
  * Between the Ashes bta-fbl.tbm.
  */
 export const fireballSchema: TableSchema = {
@@ -26,6 +26,5 @@ export const fireballSchema: TableSchema = {
   fileMatch: [/(^|[\\/])fireball\.tbl$/i, /-fbl\.tbm$/i],
   sectionNames: ["Start"],
   entryKeyField: "Name",
-  fieldOrder: ["Name", "LOD", "Type"],
-  unorderedFields: ["Unique ID"],
+  fields: [{ name: "Unique ID", unordered: true }, "Name", "LOD", "Type"],
 };

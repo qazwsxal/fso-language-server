@@ -40,7 +40,7 @@ import { curvesSchema } from "./curves";
  * none of them can ever satisfy `validateAgainstSchema()`'s `entry.sigil === "$"`
  * requirement for `entryKeyField` - this project already has a dedicated
  * `allowBareKeyValueLines` parser option specifically because this table's fields have
- * no sigil at all. The schema's `fieldOrder` was also actively wrong for completion
+ * no sigil at all. The schema's `fields` list was also actively wrong for completion
  * (offering `$Gauge Type:`/`$Position:`/`$Font:` when real files never use a `$` there).
  * There is no repeating `$`-sigil field anywhere in hud_gauges.tbl's grammar, so no
  * TableSchema can represent it as currently designed.
@@ -87,7 +87,7 @@ export function findSchemaForFile(fileNameOrUri: string): TableSchema | null {
 }
 
 export { allSchemas };
-export { TableSchema } from "./types";
+export { TableSchema, SchemaField, schemaFieldName, allFieldNames, orderedFieldNames } from "./types";
 export { shipsSchema } from "./ships";
 export { weaponsSchema } from "./weapons";
 export { speciesDefsSchema } from "./speciesDefs";

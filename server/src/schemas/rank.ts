@@ -4,7 +4,7 @@ import { LOOSE_SECTION_NAME } from "../parser";
 /**
  * rank.tbl / *-rnk.tbm schema.
  *
- * fieldOrder is a mechanical extraction from `scoring.cpp`'s `parse_rank_table()`:
+ * fields is a mechanical extraction from `scoring.cpp`'s `parse_rank_table()`:
  * `Name` -> `Alt Name` -> `Title` -> `Points` -> `Bitmap` -> `Promotion Voice Base` ->
  * `Promotion Text` (repeatable). An earlier version of this schema had `Promotion
  * Text`/`Promotion Voice Base` the wrong way around, which flagged a real, correctly-
@@ -23,5 +23,5 @@ export const rankSchema: TableSchema = {
   fileMatch: [/(^|[\\/])rank\.tbl$/i, /-rnk\.tbm$/i],
   sectionNames: ["Ranks", LOOSE_SECTION_NAME],
   entryKeyField: "Name",
-  fieldOrder: ["Name", "Alt Name", "Title", "Points", "Bitmap", "Promotion Voice Base", "Promotion Text"],
+  fields: ["Name", "Alt Name", "Title", "Points", "Bitmap", "Promotion Voice Base", "Promotion Text"],
 };

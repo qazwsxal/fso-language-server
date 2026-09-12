@@ -3,7 +3,7 @@ import { TableSchema } from "./types";
 /**
  * asteroid.tbl / *-ast.tbm schema.
  *
- * fieldOrder below is a mechanical, in-source-order extraction of every top-level
+ * fields below is a mechanical, in-source-order extraction of every top-level
  * `$Field:` literal read by `asteroid.cpp`'s per-entry parser (~line 2209-2410),
  * replacing an earlier best-effort guess that was missing `Display Name`/`Type`/
  * `Rotational Velocity Multiplier`/`Explosion Effect`/`Breakup Delay`/`Expl inner rad`/
@@ -27,7 +27,7 @@ export const asteroidSchema: TableSchema = {
   fileMatch: [/(^|[\\/])asteroid\.tbl$/i, /-ast\.tbm$/i],
   sectionNames: ["Asteroid Types"],
   entryKeyField: "Name",
-  fieldOrder: [
+  fields: [
     "Name",
     "Display Name",
     "Type",

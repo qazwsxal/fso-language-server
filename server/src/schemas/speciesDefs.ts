@@ -19,7 +19,7 @@ export const speciesDefsSchema: TableSchema = {
   fileMatch: [/(^|[\\/])species_defs\.tbl$/i, /-sdf\.tbm$/i],
   sectionNames: ["Species Defs"],
   entryKeyField: "Species_Name",
-  fieldOrder: [
+  fields: [
     "Species_Name",
     "Default IFF",
     "FRED Color",

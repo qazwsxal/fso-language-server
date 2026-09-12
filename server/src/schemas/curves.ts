@@ -16,5 +16,5 @@ export const curvesSchema: TableSchema = {
   fileMatch: [/(^|[\\/])curves\.tbl$/i, /-crv\.tbm$/i],
   sectionNames: ["Curves"],
   entryKeyField: "Name",
-  fieldOrder: ["Name", "Keyframes"],
+  fields: ["Name", "Keyframes"],
 };

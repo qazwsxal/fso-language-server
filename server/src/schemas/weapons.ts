@@ -3,7 +3,7 @@ import { TableSchema } from "./types";
 /**
  * weapons.tbl / *-wep.tbm schema.
  *
- * fieldOrder below is a mechanical, in-source-order extraction of every top-level
+ * fields below is a mechanical, in-source-order extraction of every top-level
  * `$Field:` literal read by `parse_weapon()` in `code/weapon/weapons.cpp` (live-fetched
  * from the FSO GitHub source, not the wiki or guessed) - the same treatment ships.tbl's
  * schema got.
@@ -11,9 +11,9 @@ import { TableSchema } from "./types";
  * `+`/`@`-sigil fields are NOT omitted (an earlier version of this file omitted them
  * categorically, on the reasoning that schemaValidator.ts never order-checks them
  * anyway - see schemaValidator.ts:78, still true). That reasoning stopped being
- * sufficient once fieldOrder ALSO became the data source for field-name completion
+ * sufficient once fields ALSO became the data source for field-name completion
  * (server.ts's `schemaFieldCompletions()`, triggered for `$`/`+`/`@` alike): a real
- * field missing from fieldOrder is invisible to autocomplete even though it's
+ * field missing from fields is invisible to autocomplete even though it's
  * perfectly valid to type, which is a real regression in usefulness (concretely, this
  * is why `@Laser Bitmap:` didn't autocomplete - reported and fixed). So every `+`/`@`
  * field read directly in `parse_weapon()`'s own top-level flow is now included here too,
@@ -54,7 +54,7 @@ export const weaponsSchema: TableSchema = {
   fileMatch: [/(^|[\\/])weapons\.tbl$/i, /-wep\.tbm$/i],
   sectionNames: ["Primary Weapons", "Secondary Weapons"],
   entryKeyField: "Name",
-  fieldOrder: [
+  fields: [
     "Name",
     "Alt name",
     "Subtype",

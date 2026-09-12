@@ -13,5 +13,5 @@ export const armorSchema: TableSchema = {
   fileMatch: [/(^|[\\/])armor\.tbl$/i, /-amr\.tbm$/i],
   sectionNames: ["Armor Type"],
   entryKeyField: "Name",
-  fieldOrder: ["Name", "Damage Type"],
+  fields: ["Name", "Damage Type"],
 };
