@@ -4,6 +4,51 @@ All notable changes to the "FreeSpace Open Language Server" extension are docume
 
 ## [0.0.2] - Unreleased
 
+A deeper validation pass against Between the Ashes with `fsoLsp.unknownFieldSeverity`
+turned on drove that install's diagnostic count from 909 down to 399 (effectively all of
+it real content in ships.tbl/weapons.tbl); every fix below was ground-truthed against
+live FSO C++ source:
+
+- ships.tbl's field list grew further: the `FS2 effect grid/scanline color`/`grid
+  density`/`wireframe color` and `Selection Effect`/`HUD Gauge Configs` cluster (shared
+  with weapons.tbl), `Impact`/`Collision Physics`, the full death-roll/explosion-effect
+  cluster (`Expl Splits Ship`, `Base Death-Roll Time`, `Death FX Explosion Count`, and a
+  dozen related fields), `Use Newtonian Dampening`, `EMP Resistance Modifier`/`Piercing
+  Damage Draw Limit`/`Path Metadata`/`Passive Lightning Arcs`/`Glowpoint overrides`, and
+  more - see ships.ts for the full list.
+- objecttypes.tbl's `#Ship Types` field list grew from 3 to 26 entries (`Counts for
+  Alone`, `Scannable`, `Warp Pushes`, the `$AI:` block, and more), and iff_defs.tbl
+  gained the global `$Accessibility Supported:` and per-entry `$Accessibility Color:`
+  fields.
+- fireball.tbl's `$Unique ID:` field introduced a new schema concept,
+  `unorderedFields`, for a real per-entry field whose position can't safely be
+  order-checked with this schema's single-entryKeyField model (it precedes `$Name:` on
+  every entry, but the order-reset only fires on `$Name:` - listing it in the normal,
+  order-checked field list would flag every entry after the first as "out of order").
+- Added full support for a brand new table, **intel.tbl** (`*-intl.tbm`, with `species.tbl`
+  as its legacy alias filename) - the tech-room "Intelligence Database" species/event
+  entries. This resolves a previously-documented mystery: a real file with this exact
+  shape (`$Entry:`/`$Name:`/`$Anim:`/`$AlwaysInTechRoom:`/`$Description:`) had no
+  confirmed owner anywhere in this project's prior research; it's actually parsed by
+  `code/menuui/techmenu.cpp`, a source file nobody had checked yet.
+- Recognized a new section-close-token convention: lightning.tbl's `#Bolts begin`/`#Bolts
+  end` and `#Storms begin`/`#Storms end` (a "Begin"/"end" pair, distinct from the
+  already-supported "Start"/"End" suffix convention).
+- ships.tbl's `$Briefing icon:` fix (see above) also revealed several more Between the
+  Ashes-only false positives, all fixed: `$Gravity Const:`/`$Animations:` family fields
+  missing from ships.tbl's own schema, asteroid.tbl's drastically incomplete field list,
+  rank.tbl's field order, and more (see the "validated against other large mods" entry
+  below for the full list from that pass).
+- Six more tables/file shapes confirmed to be either unsupported grammar or Lua/SCPUI
+  plugin content, not something this parser can represent, and excluded from validation
+  rather than left generating structural noise: help.tbl (`*-hlp.tbm`, a context-help
+  overlay table using colon-less `+TEXT 334 700 ...`-style fields), ui.tbl/nodemap.tbl/
+  `*-smap.tbm` (SCPUI's own tech-room UI/map configuration, no owner in base-engine FSO
+  source), props.tbl (a real, confirmed engine table whose optional `#PROP CATEGORIES`
+  section has no close token of its own), traitor.tbl (a real, confirmed engine table
+  whose two sections never close at all, by design), and `credits-footer.tbl` (the same
+  free-scroll-text shape as credits.tbl itself, under a different filename).
+
 Validated against several other large, real-world mods (Between the Ashes, Blackwater
 Operations) beyond Blue Planet, surfacing and fixing more real false positives:
 

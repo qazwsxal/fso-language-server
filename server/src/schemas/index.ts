@@ -16,6 +16,7 @@ import { musicSchema } from "./music";
 import { hudGaugesSchema } from "./hudGauges";
 import { cutscenesSchema } from "./cutscenes";
 import { mainhallSchema } from "./mainhall";
+import { intelSchema } from "./intel";
 
 /**
  * Not covered: strings.tbl/tstrings.tbl, autopilot.tbl, and game_settings.tbl. Their
@@ -42,6 +43,7 @@ const allSchemas: TableSchema[] = [
   hudGaugesSchema,
   cutscenesSchema,
   mainhallSchema,
+  intelSchema,
 ];
 
 /** Picks the schema (if any) whose fileMatch patterns match the given document file name/path. */
@@ -73,3 +75,4 @@ export { musicSchema } from "./music";
 export { hudGaugesSchema } from "./hudGauges";
 export { cutscenesSchema } from "./cutscenes";
 export { mainhallSchema } from "./mainhall";
+export { intelSchema } from "./intel";

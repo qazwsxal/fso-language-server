@@ -6,6 +6,7 @@ import { weaponsSchema } from "../src/schemas/weapons";
 import { shipsSchema } from "../src/schemas/ships";
 import { mainhallSchema } from "../src/schemas/mainhall";
 import { objectTypesSchema } from "../src/schemas/objectTypes";
+import { intelSchema } from "../src/schemas/intel";
 
 test("does not flag $Impact Explosion:/$Impact Explosion Radius: as out-of-order when they follow $Trail: (real missile weapons.tbl shape)", () => {
   const text = [
@@ -128,5 +129,26 @@ test("does not flag $Impact Explosion Radius:/$Piercing Impact Explosion: as out
 
   const { sections } = parseTable(text);
   const diagnostics = validateAgainstSchema(sections, weaponsSchema);
+  assert.deepEqual(diagnostics, []);
+});
+
+test("intelSchema activates on a real, genuinely headerless intel.tbl (bare $Entry: marker, real identity on the following $Name:) and order-checks its fields", () => {
+  const text = [
+    "$Entry:",
+    "$Name: XSTR(\"Terrans\", 9746)",
+    "$Anim: Intel_Terrans",
+    "$AlwaysInTechRoom: 1",
+    "$Description:",
+    'XSTR("Some species description.", 9747)',
+    "$end_multi_text",
+    "$Custom Data:",
+    '\t+Val: Category ("Known Species", 9759)',
+    "$end_custom_data",
+    "$Entry:",
+    "$Name: XSTR(\"Vasudans\", 1130)",
+    "$Anim: Intel_Vasudans",
+  ].join("\n");
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, intelSchema, "error");
   assert.deepEqual(diagnostics, []);
 });

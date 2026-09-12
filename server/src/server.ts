@@ -158,9 +158,18 @@ function isMissionFile(uri: string): boolean {
  * None of stars.tbl/mainhall.tbl/nebula.tbl/tips.tbl are otherwise supported by this
  * project (no dedicated extractor/cross-references for any of them) - this only
  * silences the structural false positives so editing one isn't drowned in noise.
+ *
+ * - intel.tbl/species.tbl (the legacy alias name)/`*-intl.tbm` (`code/menuui/
+ *   techmenu.cpp`'s `parse_intel_table()`) - this resolves a previously-documented
+ *   mystery (a real file with this exact shape had no confirmed owner anywhere in
+ *   ship.cpp/species_defs parsing/missionui/hud/menuui). Genuinely, unconditionally
+ *   headerless in retail (`#Intel` is `optional_string`, never required, and the retail
+ *   table has never used one) and closed implicitly by the next `$Entry:` or EOF - no
+ *   `#End` at all in a real file, though the parser now also accepts one. See
+ *   schemas/intel.ts for the full per-entry grammar.
  */
 function isOptionallyHeaderlessTableFile(uri: string): boolean {
-  return /(^|[\\/])(ssm|stars|mainhall|nebula|tips)\.tbl$|-(ssm|str|hall)\.tbm$/i.test(uri);
+  return /(^|[\\/])(ssm|stars|mainhall|nebula|tips|intel|species)\.tbl$|-(ssm|str|hall|intl)\.tbm$/i.test(uri);
 }
 
 /**
@@ -213,9 +222,54 @@ function isOptionallyHeaderlessTableFile(uri: string): boolean {
  *   is terminated by EITHER `#End` OR the next section, `#Messages`, starting.
  * - post_processing.tbl: `#Effects` runs until `#Ship Effects` starts, which runs until
  *   `#Light Shafts` starts - only the LAST of the three has a real `#End`.
+ *
+ * `credits-footer.tbl` (confirmed against a real Between the Ashes file) is the exact
+ * same free-scroll-text shape as `credits.tbl` itself (bare XSTR lines, `<br></br>`
+ * markup, no `$`/`+`/`@` grammar at all) even though it's a different base filename not
+ * read by `credits_parse_table()`'s own hardcoded `"credits.tbl"`/`"*-crd.tbm"` - almost
+ * certainly consumed by a mod's own scripting hook rather than the base engine, but the
+ * content shape alone is enough to know this parser can't represent it either way.
+ *
+ * help.tbl/`*-hlp.tbm` (`code/gamehelp/contexthelp.cpp`'s `parse_helptbl()`, mainhall
+ * context-help overlays) is a FOURTH field convention this parser has no concept of: a
+ * `$`/`+` sigil immediately followed by a bare identifier or space-separated numeric
+ * arguments with NO colon separator at all (`+resolutions 1`, `+TEXT 334 700 XSTR(...)`,
+ * `+PLINE 6 370 820 ...`) - confirmed against a real Between the Ashes bta-hlp.tbm. This
+ * parser's whole field model assumes a colon splits key from value, so every line here
+ * either misparses (the colon-based key/value split finds no colon, so the entire rest
+ * of the line becomes the "key") or, for the one bare `$<mainhall name>` marker line,
+ * trips "outside of any #Section block" since help.tbl has no header at all either.
+ *
+ * ui.tbl/`*-ui.tbm` (a real Between the Ashes bta-ui.tbm - `#Settings`/`#State
+ * Replacement`/`#Background Replacement`/`#Briefing Stage Background Replacement`/
+ * `#Medal Placements`, RmlUi `.rml` markup paths and `GS_STATE_SCRIPTING` references),
+ * nodemap.tbl (`#Node Map Icons`/`#Node Map Colors`/`#Node Map Systems`), and
+ * `*-smap.tbm` (a per-campaign "system map" file, e.g. `system_map_bta1-smap.tbm`'s
+ * `#Config`/`#Systems`) are all the same SCPUI-plugin tech-room-map family - no owner
+ * found anywhere in FSO's own C++ source for any of them, almost certainly Lua-parsed
+ * by SCPUI itself. Their actual `$Field:`/`+Subfield:` grammar IS representable by this
+ * parser, but like game_settings.tbl/messages.tbl/post_processing.tbl, only the LAST of
+ * several sections has a real `#End` - the same "closes implicitly at the next specific
+ * section" shape this parser's generic section model can't express, so all three are
+ * excluded here too rather than only partially handled.
+ *
+ * props.tbl/`*-prp.tbm` (`code/prop/prop.cpp`'s `parse_prop_table()` - decorative
+ * background props, a real, confirmed base-engine table, unlike the SCPUI ones above)
+ * has the same "implicit close by next section" shape: the optional `#PROP CATEGORIES`
+ * section (a `$Name:`/`+Color:` list) has no close token of its own at all - it simply
+ * ends whenever `$Name:` stops matching and the required `#PROPS` section begins.
+ *
+ * traitor.tbl/`*-trtr.tbm` (`code/stats/scoring.cpp`'s `parse_traitor_tbl()` - the
+ * "you've been branded a traitor" debriefing text) goes a step further: its two
+ * sections, `#Debriefing_info` and `#Traitor Overrides`, are BOTH entirely
+ * `optional_string`-gated with NO close token of any kind, ever - not `#End`, not an
+ * implicit next-section close either (confirmed: the function just falls straight from
+ * one `if (optional_string(...))` block into the next). A real file simply never closes
+ * either section, which this parser's section model has no way to represent short of a
+ * per-table "this section never closes" rule - excluded like the others above instead.
  */
 function isUnsupportedGrammarFile(uri: string): boolean {
-  return /(^|[\\/])(scripting|strings|tstrings|credits|hud_gauges|game_settings|messages|post_processing)\.tbl$|-(sct|lcl|tlc|crd|hdg)\.tbm$/i.test(
+  return /(^|[\\/])(scripting|strings|tstrings|credits|credits-footer|hud_gauges|game_settings|messages|post_processing|help|ui|nodemap|props|traitor)\.tbl$|-(sct|lcl|tlc|crd|hdg|hlp|ui|smap|prp|trtr)\.tbm$/i.test(
     uri,
   );
 }

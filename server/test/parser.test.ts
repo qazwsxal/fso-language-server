@@ -50,6 +50,15 @@ test("closes a table-specific Start/End section pair, not just generic #End", ()
   assert.equal(result.diagnostics.length, 0);
 });
 
+test("closes a table-specific Begin/end section pair (real lightning.tbl shape: #Bolts begin/#Bolts end)", () => {
+  const text = ["#Bolts begin", "$Bolt: b_standard", "+b_scale: 0.5", "#Bolts end"].join("\n");
+  const result = parseTable(text);
+  assert.equal(result.sections.length, 1);
+  assert.equal(result.sections[0].name, "Bolts begin");
+  assert.equal(result.sections[0].endLine, 3);
+  assert.equal(result.diagnostics.length, 0);
+});
+
 test("a plain #End still closes a Start/End-style section (defensive fallback)", () => {
   const text = ["#Game Sounds Start", "$Name: 1", "#End"].join("\n");
   const result = parseTable(text);

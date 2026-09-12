@@ -11,6 +11,15 @@ import { TableSchema } from "./types";
  * entryKeyField model only supports one key field, so "Name" is used as the primary
  * (more common) form; a `$Unique ID:`-keyed entry won't be order-checked, which is a
  * known limitation of the schema shape rather than a fresh guess.
+ *
+ * `Unique ID` itself is real and OPTIONAL, always parsed right BEFORE `$Name:` on a
+ * real entry (`fireballs.cpp`) - putting it in `fieldOrder` ahead of `Name` would only
+ * be safe for the FIRST entry in a section: `validateAgainstSchema()`'s order-reset
+ * only fires on `entryKeyField` ("Name"), so `$Unique ID:` on every later entry would
+ * still be compared against the PREVIOUS entry's highest field index and almost always
+ * flagged "out of order". Listed in `unorderedFields` instead (see its doc comment in
+ * schemas/types.ts) so it's recognized without that risk - confirmed against a real
+ * Between the Ashes bta-fbl.tbm.
  */
 export const fireballSchema: TableSchema = {
   name: "fireball.tbl",
@@ -18,4 +27,5 @@ export const fireballSchema: TableSchema = {
   sectionNames: ["Start"],
   entryKeyField: "Name",
   fieldOrder: ["Name", "LOD", "Type"],
+  unorderedFields: ["Unique ID"],
 };

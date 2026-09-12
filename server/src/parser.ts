@@ -325,11 +325,17 @@ function normalizeKey(key: string): string {
  * End`, etc. - confirmed in fso-table-format project memory) use a distinctly-named
  * close token derived from the open token. When a section's opening name ends in
  * "Start" (case-insensitive), its close token is that same name with "Start" replaced
- * by "End"; otherwise the close token is the generic "End".
+ * by "End". lightning.tbl uses the same shape with different words - confirmed against
+ * `code/nebula/neblightning.cpp`: `#Bolts begin`/`#Bolts end`, `#Storms begin`/`#Storms
+ * end` (real Between the Ashes lightning.tbl) - so "Begin" (case-insensitive) is
+ * recognized the same way. Otherwise the close token is the generic "End".
  */
 function closeTokenForSectionName(name: string): string {
   if (/start$/i.test(name)) {
     return name.replace(/start$/i, "End");
+  }
+  if (/begin$/i.test(name)) {
+    return name.replace(/begin$/i, "end");
   }
   return "End";
 }
