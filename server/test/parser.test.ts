@@ -216,6 +216,38 @@ test("does not treat a bare list following $Name: as a wing-formation value outs
   assert.equal(result.diagnostics.filter((d) => /Unrecognized line/.test(d.message)).length, 1);
 });
 
+test("consumes a curve's bare, sigil-less '(x, y): Type' keyframe lines following $Keyframes: in a #Curves section (real Star Fox Event Horizon curves.tbl shape)", () => {
+  const text = [
+    "#Curves",
+    "",
+    "$Name: WalkerSpeedCurve",
+    "$KeyFrames:",
+    "(0, 0): Linear",
+    "(100, 4.0): Constant",
+    "(200, 5.0): Constant",
+    "",
+    "$Name: WalkerRunSpeedCurve",
+    "$KeyFrames:",
+    "(75, 0): Linear",
+    "(76, 1): Constant",
+    "",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text, { autoCloseSectionsOnNextSection: true, tolerateUnclosedSectionAtEof: true });
+  assert.deepEqual(result.diagnostics, []);
+  const entries = result.sections[0].entries;
+  const keyframeEntries = entries.filter((e) => e.key === "KeyFrames");
+  assert.equal(keyframeEntries.length, 2);
+  assert.ok(keyframeEntries[0].value.includes("(200, 5.0): Constant"));
+  assert.ok(keyframeEntries[1].value.includes("(76, 1): Constant"));
+});
+
+test("does not treat a bare '(x, y): Type' line as a curve keyframe outside a #Curves section", () => {
+  const text = ["#Ship Classes", "$Name: GTF Ulysses", "$KeyFrames:", "(0, 0): Linear", "#End"].join("\n");
+  const result = parseTable(text);
+  assert.equal(result.diagnostics.filter((d) => /Unrecognized line/.test(d.message)).length, 1);
+});
+
 test("consumes a multi-line embedded Lua chunk in single brackets without flagging any of its lines (real scripting.tbl/-sct.tbm shape)", () => {
   const text = [
     "#Conditional Hooks",
@@ -297,6 +329,27 @@ test("warns about a bare ';' inside an embedded Lua chunk silently truncating th
   // "local y = 10" is genuinely gone, matching real (if unfortunate) engine behavior;
   // the diagnostic above is what tells the user their code was silently cut.
   assert.ok(!result.sections[0].entries[0].value.includes("local y = 10"));
+});
+
+test("does not warn about a whole-line ';; comment' with nothing but whitespace before it (real The Sixth Seal proBox-sct.tbm shape: a plain double-semicolon note, not a version tag, cutting off no real code)", () => {
+  const text = [
+    "#Conditional Hooks",
+    "$On Key Pressed: [",
+    ";; In 21.4, addBit was deprecated and replaced with setBit",
+    "  data.Bitfield = bit.addBit(data.Bitfield, value)",
+    "]",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text);
+  const footguns = result.diagnostics.filter((d) => /silently discarded when this table loads/.test(d.message));
+  assert.equal(footguns.length, 0);
+});
+
+test("does not warn about a trailing Lua statement-terminator ';' with nothing but whitespace after it (real Star Fox Event Horizon mainmenumovie-sct.tbm shape: 'lastTime = currentTime;' with nothing left on the line to lose)", () => {
+  const text = ["#Conditional Hooks", "$On Key Pressed: [", "  lastTime = currentTime;", "]", "#End"].join("\n");
+  const result = parseTable(text);
+  const footguns = result.diagnostics.filter((d) => /silently discarded when this table loads/.test(d.message));
+  assert.equal(footguns.length, 0);
 });
 
 test("does not warn about a ';' inside a Lua double-quoted string (FSO's own quote-toggle already protects this case)", () => {
@@ -458,6 +511,29 @@ test("autoCloseSectionsOnNextSection: a section is closed silently by the next #
   assert.equal(result.sections[1].endLine, 6);
 });
 
+test("autoCloseSectionsOnNextSection: seven chained bare-divider sections all close implicitly, only the trailing #END is real (real The Sixth Seal 2 tss2-mod.tbm game_settings.tbl/*-mod.tbm shape)", () => {
+  const text = [
+    "#GAME SETTINGS",
+    "$Unicode mode: YES",
+    "#CAMPAIGN SETTINGS",
+    "$Default Campaign File Name: tss2",
+    "#Ignored Campaign File Names",
+    "$Campaign File Name: tss",
+    "#Ignored Mission File Names",
+    "$Mission File Name: mdu-02",
+    "#SEXP SETTINGS",
+    "#GRAPHICS SETTINGS",
+    "#OTHER SETTINGS",
+    "$Fixed Turret Collisions: YES",
+    "#END",
+  ].join("\n");
+  const result = parseTable(text, { autoCloseSectionsOnNextSection: true });
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(result.sections.length, 7);
+  assert.equal(result.sections[6].name, "OTHER SETTINGS");
+  assert.equal(result.sections[6].endLine, 12);
+});
+
 test("autoCloseSectionsOnNextSection: the very LAST section still needs a real #End (only the boundary BETWEEN sections is implicit)", () => {
   const text = ["#Personas", "$Persona: Terran Command", "#Messages", "$Name: M01"].join("\n");
   const result = parseTable(text, { autoCloseSectionsOnNextSection: true });
@@ -574,6 +650,20 @@ test("allowBareKeyValueLines: a bare 'Key: value' line (no sigil) nested inside 
   ].join("\n");
   const gaugesResult = parseTable(text, { allowBareKeyValueLines: true });
   assert.deepEqual(gaugesResult.diagnostics, []);
+});
+
+test("allowBareKeyValueLines: a bare key starting with a digit (e.g. '3 Digit Hull Offsets:') is recognized too (real Blue Planet Complete mv_root-hdg.tbm shape)", () => {
+  const text = [
+    "#Gauge Config",
+    "+Custom:",
+    "	Origin: (0.5, 0.5)",
+    "	3 Digit Hull Offsets: (6,12)",
+    "	2 Digit Hull Offsets: (14,12)",
+    "	1 Digit Hull Offsets: (19,12)",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text, { allowBareKeyValueLines: true });
+  assert.deepEqual(result.diagnostics, []);
 });
 
 test("recognizes traitor.tbl's $Multi text:/$Recommendation text: as multi-line fields, not their XSTR content as unrecognized lines (real Between the Ashes traitor.tbl shape)", () => {

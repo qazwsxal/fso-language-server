@@ -334,6 +334,27 @@ export function parseTable(text: string, options: ParseTableOptions = {}): Parse
         i = j - 1;
         entryValueWasSpecialCased = true;
       } else if (
+        currentSection &&
+        normalizeKey(currentSection.name) === "curves" &&
+        sigil === "$" &&
+        normalizeKey(key) === "keyframes"
+      ) {
+        // Real grammar (`code/math/curve.cpp`'s `Curve::ParseData()`, confirmed against
+        // a real Star Fox Event Horizon curves.tbl): a curve's `$Keyframes:` is followed
+        // by one or more completely bare, sigil-less `(x, y): InterpType[, params]`
+        // lines - no `+Subfield:` wrapper of any kind - each read via
+        // `stuff_parenthesized_vec2d()`/`required_string(":")`/`stuff_string()` in a
+        // loop that stops at the next `$Name:` (the next curve) or an optional `#End`.
+        // Every real keyframe line starts with "(", which neither of those stop
+        // conditions do, so that's used as the continuation test here too.
+        let j = i + 1;
+        while (j < lines.length && stripLineComment(stripVersionTag(lines[j])).trim().startsWith("(")) {
+          entryValue += (entryValue.length > 0 ? "\n" : "") + stripLineComment(stripVersionTag(lines[j]));
+          j++;
+        }
+        i = j - 1;
+        entryValueWasSpecialCased = true;
+      } else if (
         isLuaChunkOpener(entryValue) ||
         (entryValue.length === 0 &&
           isLuaChunkOpener(peekFirstNonBlankLine(lines, i + 1).text) !== null)
@@ -503,16 +524,18 @@ export function parseTable(text: string, options: ParseTableOptions = {}): Parse
       continue;
     }
 
-    if (allowBareKeyValueLines && /^[A-Za-z][\w '"/.-]*:/.test(line)) {
+    if (allowBareKeyValueLines && /^[A-Za-z0-9][\w '"/.-]*:/.test(line)) {
       // hud_gauges.tbl (`code/hud/hudparse.cpp`'s `parse_hud_gauges_tbl()`): a
       // `+Custom:`/`+Scripted Gauge:`/etc. sub-block's own fields (`Origin:`,
       // `Offset:`, `Name:`, `Text:`, `Gauge Type:`, ...) use a bare `Key: value` shape
       // with NO sigil - confirmed against a real Between the Ashes bta-hdg.tbm. As with
       // the bare indexed strings above, this just recognizes the shape (a leading
-      // letter, then word/space/quote/slash/dot/hyphen characters, then a colon) well
-      // enough to stop flagging it, without trying to extract or order-check it - the
-      // real per-gauge-type field lists run into the dozens and aren't schema-checked
-      // by this project regardless.
+      // letter or digit, then word/space/quote/slash/dot/hyphen characters, then a
+      // colon) well enough to stop flagging it, without trying to extract or
+      // order-check it - the real per-gauge-type field lists run into the dozens and
+      // aren't schema-checked by this project regardless. The leading-digit allowance
+      // is needed for real fields like `3 Digit Hull Offsets:` (confirmed against a
+      // real Blue Planet Complete mv_root-hdg.tbm).
       continue;
     }
 
@@ -927,7 +950,24 @@ function checkLuaChunkFootguns(
     // past a matching tag before ever looking for a plain `;` comment.
     const versionStripped = stripVersionTag(original);
     const semicolonCol = findUnquotedSemicolon(versionStripped);
-    if (semicolonCol !== -1) {
+    if (
+      semicolonCol !== -1 &&
+      versionStripped.slice(0, semicolonCol).trim().length > 0 &&
+      versionStripped.slice(semicolonCol + 1).trim().length > 0
+    ) {
+      // Nothing but whitespace precedes the ';' on this line (after stripping any
+      // leading version tag) means the WHOLE line was already just a plain comment -
+      // e.g. a modder writing a bare `;; explanatory note` line, confirmed against a
+      // real The Sixth Seal proBox-sct.tbm. Since there's no real Lua code before the
+      // ';' to lose, warning here would just be noise on an intentional comment, not a
+      // genuine footgun - this only fires when a ';' cuts off something AFTER real
+      // content earlier on the same line.
+      //
+      // Symmetrically, nothing but whitespace AFTER the ';' (a trailing Lua statement
+      // terminator with nothing following it on the line, e.g. `lastTime = currentTime;`
+      // - confirmed against a real Star Fox Event Horizon mainmenumovie-sct.tbm) means
+      // there's genuinely nothing left for FSO's comment-stripping to discard either -
+      // also not a real footgun, just a very common Lua style choice.
       // stripVersionTag() only ever removes a leading prefix, so adding back how much
       // shorter the result is recovers the correct column in the untouched `original`.
       const versionTagLength = original.length - versionStripped.length;

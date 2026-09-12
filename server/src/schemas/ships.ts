@@ -55,8 +55,14 @@ import { TableSchema } from "./types";
  * Constant`, `Glide`, `Autoaim FOV`/`Convergence` (ship-level turret-aim fields that
  * happen to share a literal name with unrelated per-weapon fields in weapons.ts - a
  * second legitimate owner, not a typo), the full `Warpin `/`Warpout ` field cluster
- * (`parse_warp_params()`, ship.cpp:2544), `Vaporize Percent Chance`, `Shockwave Count`,
- * `Shockwave Sound` (also ship-level, also shared with weapons.ts), `Weapon Model Draw
+ * (`parse_warp_params()`, ship.cpp:2544), `Vaporize Percent Chance`, and the full
+ * ship-level `Shockwave Damage Type`/`Shockwave Speed`/`Shockwave Count`/`Shockwave
+ * model`/`Shockwave Name`/`Shockwave Sound` cluster (ship.cpp:3713-3735 - a ship's own
+ * death shockwave, entirely separate from a weapon's impact shockwave even though most
+ * of these field names are shared verbatim with weapons.ts; confirmed missing three of
+ * six real fields here after a real Star Fox Event Horizon ships.tbl - a genuine total
+ * conversion, not just a retail-derived mod - falsely flagged `$Shockwave Name:` as "a
+ * weapons.tbl field, not recognized in ships.tbl"), `Weapon Model Draw
  * Distance`, `PBank Capacity` (present for SBanks as `SBank Capacity` already, but
  * missing for PBanks - same `parse_weapon_bank_capacities()` call, ship.cpp:2457),
  * `Show Primary Models`/`Show Secondary Models`, `Shield Regeneration Rate`/`Weapon
@@ -172,8 +178,11 @@ export const shipsSchema: TableSchema = {
     "Shrapnel Death Effect",
     "Skip Death Roll Percent Chance",
     "Vaporize Percent Chance",
+    "Shockwave Damage Type",
     "Shockwave Speed",
     "Shockwave Count",
+    "Shockwave model",
+    "Shockwave Name",
     "Shockwave Sound",
     "Explosion Animations",
     "Weapon Model Draw Distance",

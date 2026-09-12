@@ -182,7 +182,15 @@ function isMissionFile(uri: string): boolean {
  *   overly broad "this parser can't represent help.tbl at all" exclusion.
  */
 function isOptionallyHeaderlessTableFile(uri: string): boolean {
-  return /(^|[\\/])(ssm|stars|mainhall|nebula|tips|intel|species|help)\.tbl$|-(ssm|str|hall|intl|hlp)\.tbm$/i.test(uri);
+  // hud_gauges.tbl (`code/hud/hudparse.cpp`'s `parse_hud_gauges_tbl()`): its
+  // `#HUD Config Settings` AND `#HUD Global Settings` sections are BOTH optional
+  // (`optional_string()`, not `required_string()`), so a real file's top-level
+  // `$Font:`/`$Max directives:`/`$Scale Gauges:`-style settings can appear with no
+  // enclosing section at all - confirmed against a real Blue Planet Complete
+  // mv_root-hdg.tbm, which omits both wrapper sections entirely.
+  return /(^|[\\/])(ssm|stars|mainhall|nebula|tips|intel|species|help|hud_gauges)\.tbl$|-(ssm|str|hall|intl|hlp|hdg)\.tbm$/i.test(
+    uri,
+  );
 }
 
 /**
@@ -273,20 +281,25 @@ function freeTextTailForFile(uri: string): Set<string> | undefined {
  * `autoCloseSectionsOnNextSection` option (see its doc comment) rather than excluding
  * these tables from validation altogether the way the truly unrepresentable ones above
  * are:
- * - game_settings.tbl (confirmed from the file's own real shape - no dedicated .cpp
- *   found, but every real file matches): `#GAME SETTINGS`/`#CAMPAIGN SETTINGS`/etc. are
- *   bare dividers with no scoping semantics at all - only the LAST section in the whole
- *   file has a real closing `#End`. Also explicitly out of scope for schema/field-order
- *   validation already (see schemas/index.ts's doc comment).
+ * - game_settings.tbl/`*-mod.tbm` (`code/mod_table/mod_table.cpp`'s `parse_mod_table()`,
+ *   registered as `parse_modular_table("*-mod.tbm", parse_mod_table)` - confirmed
+ *   against a real The Sixth Seal 2 tss2-mod.tbm): `#GAME SETTINGS`/`#CAMPAIGN
+ *   SETTINGS`/`#Ignored Campaign File Names`/`#Ignored Mission File Names`/`#SEXP
+ *   SETTINGS`/`#GRAPHICS SETTINGS`/`#OTHER SETTINGS` are ALL `optional_string()`-gated
+ *   bare dividers with no scoping semantics of their own - only the very end of the
+ *   whole file has a real, required `#END`. Also explicitly out of scope for
+ *   schema/field-order validation already (see schemas/index.ts's doc comment).
  * - messages.tbl (`code/mission/missionmessage.cpp`): confirmed via
  *   `while (required_string_one_of(3, "#Messages", "$Persona:", "#End"))` - `#Personas`
  *   is terminated by EITHER `#End` OR the next section, `#Messages`, starting.
  * - post_processing.tbl: `#Effects` runs until `#Ship Effects` starts, which runs until
  *   `#Light Shafts` starts - only the LAST of the three has a real `#End`.
- * - ui.tbl/`*-ui.tbm` (a real Between the Ashes bta-ui.tbm - `#Settings`/`#State
- *   Replacement`/`#Background Replacement`/`#Briefing Stage Background Replacement`/
- *   `#Medal Placements`, RmlUi `.rml` markup paths and `GS_STATE_SCRIPTING` references),
- *   nodemap.tbl (`#Node Map Icons`/`#Node Map Colors`/`#Node Map Systems`), and
+ * - ui.tbl/`*-ui.tbm`/scpui.tbl (a real Between the Ashes bta-ui.tbm, and a real Star
+ *   Fox Event Horizon scpui.tbl - same content shape under a different base filename -
+ *   `#Settings`/`#State Replacement`/`#Background Replacement`/`#Briefing Stage
+ *   Background Replacement`/`#Medal Placements`, RmlUi `.rml` markup paths and
+ *   `GS_STATE_SCRIPTING` references), nodemap.tbl (`#Node Map Icons`/`#Node Map
+ *   Colors`/`#Node Map Systems`), and
  *   `*-smap.tbm` (a per-campaign "system map" file, e.g. `system_map_bta1-smap.tbm`'s
  *   `#Config`/`#Systems`) are all the same SCPUI-plugin tech-room-map family - no owner
  *   found anywhere in FSO's own C++ source for any of them, almost certainly Lua-parsed
@@ -311,21 +324,36 @@ function freeTextTailForFile(uri: string): Set<string> | undefined {
  *   below. The earlier, properly-`#End`-closed `#Supported Languages` section (real
  *   `$Language:`/`+Extension:`/etc. syntax) is unaffected either way, since it's already
  *   closed via its own real `#End` well before any of this applies.
+ * - hud_gauges.tbl/`*-hdg.tbm` (`code/hud/hudparse.cpp`'s `parse_hud_gauges_tbl()`): its
+ *   leading `#HUD Config Settings` and `#HUD Global Settings` markers are BOTH gated by
+ *   `optional_string()` alone, with no close token of any kind - real files (confirmed
+ *   against a real The Sixth Seal opupsilon-hdg.tbm) can have `#HUD Global Settings`
+ *   immediately followed by `#Gauge Config` with nothing in between. `#Gauge Config`
+ *   itself DOES require a real `$End Gauges`/`#End` pair (both `required_string()`), so
+ *   this table is NOT in `isNeverRequiresEndFile()` below - only the two decorative
+ *   leading markers implicitly close.
+ * - curves.tbl/`*-crv.tbm` (`code/math/curve.cpp`'s `parse_curve_table()`): its single
+ *   `#Curves` wrapper is `required_string()`-opened but never `required_string("#End")`-
+ *   closed at the top level at all - each individual curve's own data loop
+ *   (`Curve::ParseData()`) only optionally consumes a `#End` as an early-exit shortcut.
+ *   Only ever has the one section, so `autoCloseSectionsOnNextSection` is a no-op here in
+ *   practice - included anyway to satisfy `isNeverRequiresEndFile()`'s "subset of this"
+ *   invariant below rather than carving out a one-off exception to it.
  */
 function isImplicitSectionCloseFile(uri: string): boolean {
-  return /(^|[\\/])(game_settings|messages|post_processing|ui|nodemap|props|traitor|strings|tstrings)\.tbl$|-(ui|smap|prp|trtr|lcl|tlc)\.tbm$/i.test(
+  return /(^|[\\/])(game_settings|messages|post_processing|ui|scpui|nodemap|props|traitor|strings|tstrings|hud_gauges|curves)\.tbl$|-(ui|smap|prp|trtr|lcl|tlc|hdg|mod|crv)\.tbm$/i.test(
     uri,
   );
 }
 
 /**
  * Subset of `isImplicitSectionCloseFile()` whose sections never require a real `#End`
- * at all, not even the very last one - confirmed for traitor.tbl and strings.tbl/
- * tstrings.tbl (see `isImplicitSectionCloseFile()`'s doc comment). Passed through to
- * `parseTable()`'s `tolerateUnclosedSectionAtEof` option.
+ * at all, not even the very last one - confirmed for traitor.tbl, strings.tbl/
+ * tstrings.tbl, and curves.tbl/`*-crv.tbm` (see `isImplicitSectionCloseFile()`'s doc
+ * comment). Passed through to `parseTable()`'s `tolerateUnclosedSectionAtEof` option.
  */
 function isNeverRequiresEndFile(uri: string): boolean {
-  return /(^|[\\/])(traitor|strings|tstrings)\.tbl$|-(trtr|lcl|tlc)\.tbm$/i.test(uri);
+  return /(^|[\\/])(traitor|strings|tstrings|curves)\.tbl$|-(trtr|lcl|tlc|crv)\.tbm$/i.test(uri);
 }
 
 /** Per-document species-entry cache (currently just `$Default IFF:`), keyed by URI. */

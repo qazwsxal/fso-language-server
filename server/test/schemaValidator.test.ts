@@ -61,6 +61,22 @@ test("does not flag $Alt name:/$Countermeasure type: in ships.tbl - both genuine
   assert.deepEqual(diagnostics, []);
 });
 
+test("does not flag $Shockwave Damage Type:/$Shockwave model:/$Shockwave Name: in ships.tbl - a ship's own death shockwave is a real, separate ships.tbl field cluster from a weapon's impact shockwave (real Star Fox Event Horizon ships.tbl false positive)", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$Shockwave Damage Type: Blast",
+    "$Shockwave Speed: 300",
+    "$Shockwave Count: 1",
+    "$Shockwave model: shockwave01.pof",
+    "$Shockwave Name: ShockwaveLarge",
+    "#End",
+  ].join("\n");
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, shipsSchema, "error");
+  assert.deepEqual(diagnostics, []);
+});
+
 test("mainhallSchema activates on a real, genuinely headerless mainhall.tbl (bare $Main Hall marker, not $Name:) and order-checks its fields", () => {
   // An earlier version of this schema used entryKeyField: "Name" and
   // sectionNames: ["Main Halls"] - neither ever matches a real mainhall.tbl (headerless,
