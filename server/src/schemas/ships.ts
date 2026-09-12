@@ -17,6 +17,17 @@ import { TableSchema } from "./types";
  * armor.tbl cross-references are the top-level `$Armor Type:` (hull) and
  * `$Shield Armor Type:` (shield) fields, confirmed to sit between `$Hitpoints:`-area
  * fields and `$Flags:`.
+ *
+ * Extended in a later pass (running the real, compiled extension against a real Blue
+ * Planet install surfaced these as false "possibly misplaced" - a field genuinely
+ * belonging to exactly one OTHER schema, per schemaValidator.ts, gets flagged when it's
+ * missing from ITS OWN table's list too): `Alt name` and `Countermeasure type` are
+ * shared with weapons.tbl/species_defs.tbl respectively (both real ships.tbl fields,
+ * just also real elsewhere under the same name); `Cockpit POF file`/`POF file Techroom`/
+ * `POF target file`/`POF target LOD`/`Default Team`/`Explosion Animations`/`Target
+ * Priority Groups`/`Ship IFF Colors`/the four `Briefing icon...` variants are real
+ * ships.tbl-only fields this project already extracts/cross-references (see
+ * shipEntries.ts) that had simply never been added here.
  */
 export const shipsSchema: TableSchema = {
   name: "ships.tbl",
@@ -25,10 +36,17 @@ export const shipsSchema: TableSchema = {
   entryKeyField: "Name",
   fieldOrder: [
     "Name",
+    "Alt name",
     "Short name",
     "Species",
+    "Cockpit POF file",
     "POF file",
+    "POF file Techroom",
+    "POF target file",
+    "POF target LOD",
     "Detail distance",
+    "Enable Team Colors",
+    "Default Team",
     "Show damage",
     "Dying Gravity Const",
     "Density",
@@ -47,6 +65,7 @@ export const shipsSchema: TableSchema = {
     "Expl blast",
     "Expl Propagates",
     "Shockwave Speed",
+    "Explosion Animations",
     "Allowed PBanks",
     "Allowed Dogfight PBanks",
     "Default PBanks",
@@ -65,6 +84,7 @@ export const shipsSchema: TableSchema = {
     "Flags",
     "AI Class",
     "Afterburner",
+    "Countermeasure type",
     "Countermeasures",
     "Scan time",
     "Closeup_pos",
@@ -73,9 +93,15 @@ export const shipsSchema: TableSchema = {
     "Ship_icon",
     "Ship_anim",
     "Ship_overhead",
+    "Briefing icon",
+    "Briefing icon with cargo",
+    "Briefing wing icon",
+    "Briefing wing icon with cargo",
     "Score",
     "Thruster Normal Flame",
     "Thruster Afterburner Flame",
+    "Ship IFF Colors",
+    "Target Priority Groups",
     "Trail",
     "Thruster",
     "Subsystem",

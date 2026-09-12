@@ -4,6 +4,8 @@ import { parseTable } from "../src/parser";
 import { validateAgainstSchema } from "../src/schemaValidator";
 import { weaponsSchema } from "../src/schemas/weapons";
 import { shipsSchema } from "../src/schemas/ships";
+import { mainhallSchema } from "../src/schemas/mainhall";
+import { objectTypesSchema } from "../src/schemas/objectTypes";
 
 test("does not flag $Impact Explosion:/$Impact Explosion Radius: as out-of-order when they follow $Trail: (real missile weapons.tbl shape)", () => {
   const text = [
@@ -42,6 +44,40 @@ test("flags a ships.tbl-only field (POF file) pasted into a weapons.tbl entry as
   const diagnostics = validateAgainstSchema(sections, weaponsSchema);
   assert.equal(diagnostics.length, 1);
   assert.match(diagnostics[0].message, /ships\.tbl field, not recognized in weapons\.tbl/);
+});
+
+test("does not flag $Alt name:/$Countermeasure type: in ships.tbl - both genuinely shared with weapons.tbl/species_defs.tbl respectively (real Blue Planet false positive)", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$Alt name: Ulysses Mk II",
+    "$POF Target LOD: 3",
+    "$Countermeasure type: Cluster Bomb",
+    "#End",
+  ].join("\n");
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, shipsSchema, "error");
+  assert.deepEqual(diagnostics, []);
+});
+
+test("mainhallSchema activates on a real, genuinely headerless mainhall.tbl (bare $Main Hall marker, not $Name:) and order-checks its fields", () => {
+  // An earlier version of this schema used entryKeyField: "Name" and
+  // sectionNames: ["Main Halls"] - neither ever matches a real mainhall.tbl (headerless,
+  // entries keyed by a bare `$Main Hall` marker), so validateAgainstSchema()'s
+  // entryKeyFieldSeen guard silently skipped the section entirely and this schema
+  // validated nothing at all. Confirmed against real Blue Planet bp-main-hall.tbm.
+  const text = ["$Main Hall", "+Name: mainhall1", "$Music: briefing", "$Bitmap: mainhall1", "#End"].join("\n");
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, mainhallSchema, "error");
+  assert.equal(diagnostics.length, 1);
+  assert.match(diagnostics[0].message, /out of the expected field order/i);
+});
+
+test("does not flag $Target Priority Groups: in an objecttypes.tbl #Ship Types entry - genuinely shared with ships.tbl (real Blue Planet false positive)", () => {
+  const text = ["#Ship Types", "$Name: fighter", "$Target Priority Groups: ( bomber )", "#End"].join("\n");
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, objectTypesSchema, "error");
+  assert.deepEqual(diagnostics, []);
 });
 
 test("a field owned by 3+ other schemas (Bitmap: rank.tbl/mainhall.tbl/medals.tbl) is ambiguous - never flagged as misplaced, and never reported as unknown either", () => {

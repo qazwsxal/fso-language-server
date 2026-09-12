@@ -13,6 +13,42 @@ rather than guessed:
   the active mod's search path, so cross-reference problems show up in the Problems panel
   even for files nobody has opened yet. Re-scans automatically when a table file changes
   on disk.
+- `"wholeMod"` scanning a real, large Blue Planet Complete install (dozens of table files)
+  surfaced and fixed a wave of false positives, taking that install from 855 diagnostics
+  down to 44 (every remaining one independently verified as a real, missing asset in the
+  mod rather than an extension bug):
+  - `ships.tbl`'s field list was missing several genuinely real fields (`Alt name`,
+    `Cockpit POF file`, `POF file Techroom`, `POF target file`, `POF target LOD`,
+    `Default Team`, `Explosion Animations`, `Target Priority Groups`, `Countermeasure
+    type`, the four `Briefing icon...` variants, `Ship IFF Colors`), each showing up as a
+    false "possibly misplaced" warning; `objecttypes.tbl`'s schema was similarly missing
+    `Target Priority Groups` (genuinely shared with ships.tbl).
+  - `mainhall.tbl`'s schema keyed entries on `$Name:` and expected a `#Main Halls`
+    section - neither ever matches a real file (entries are headerless and keyed by a
+    bare `$Main Hall` marker), so it silently validated nothing at all; now fixed and
+    active.
+  - scripting.tbl/`*-sct.tbm`, strings.tbl/tstrings.tbl/`*-lcl.tbm`/`*-tlc.tbm`,
+    credits.tbl/`*-crd.tbm`, and hud_gauges.tbl/`*-hdg.tbm` are no longer validated at
+    all - each uses a field/value grammar (embedded Lua, bare `index "string"` pairs,
+    free-form scroll text, sigil-less `Key: value` lines) this extension's table parser
+    fundamentally can't represent, so every diagnostic on them was noise (one real
+    hud_gauges.tbm produced 700+ by itself).
+  - game_settings.tbl, messages.tbl, and post_processing.tbl close a section implicitly
+    (by the start of a specific next section) rather than with an explicit `#End` -
+    likewise now fully excluded from structural validation.
+  - ssm.tbl/stars.tbl/mainhall.tbl/nebula.tbl/tips.tbl (all genuinely or routinely
+    headerless) and a section whose real close token is `#End <Name>` (prefix style, e.g.
+    lighting_profiles.tbl's `#Profiles`/`#END PROFILES`) no longer trip "outside of any
+    #Section block" / "not closed with #End".
+  - A field value that's entirely one quoted string (e.g. `$Species: "Terran"`) no longer
+    keeps its literal quotes, which used to break every cross-reference lookup against it.
+  - `species_defs.tbl`/`iff_defs.tbl`/`objecttypes.tbl` now fall back to FSO's own
+    compiled-in default content (Terran/Vasudan/Shivan; Friendly/Hostile/Neutral/Unknown/
+    Traitor; a base `#Ship types` list) when a mod's entire dependency chain - including
+    retail - never ships a real file for one, exactly like the engine does.
+  - A weapon's `$Player Weapon Precedence:` (a real field that sits after the weapons
+    section's own `#End` in the actual grammar) no longer trips "outside of any #Section
+    block".
 
 - Fixed a real false positive found by `"wholeMod"`-scanning a real Blue Planet install: a
   ship/species/IFF/ship-type reference that only resolves via FSO's own compiled-in

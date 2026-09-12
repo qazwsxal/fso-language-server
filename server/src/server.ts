@@ -134,15 +134,33 @@ function isMissionFile(uri: string): boolean {
  * - ssm.tbl/*-ssm.tbm (`code/hud/hudartillery.cpp`'s `parse_ssm()`, see ssmEntries.ts) -
  *   genuinely, unconditionally headerless. No header-handling code exists for it at all.
  * - stars.tbl/*-str.tbm (`code/starfield/starfield.cpp`'s `parse_startbl()`) - every
- *   section header (`#Stars`, `#Motion Debris`, ...) is read via a bare `optional_string()`
- *   with no fallback check, so a modular `-str.tbm` patch (confirmed against a real Blue
- *   Planet bp2-str.tbm - sun/flare overrides only) routinely omits them entirely and
- *   starts straight in on `$Sun:` entries. This table isn't otherwise supported by this
- *   project (no dedicated extractor/cross-references) - this only silences the one
- *   structural false positive so editing one isn't drowned in noise.
+ *   section header (`#Stars`, `#Motion Debris`, `#Bitmaps`, ...) is read via a bare
+ *   `optional_string()` with no fallback check, so a modular `-str.tbm` patch routinely
+ *   omits them entirely and starts straight in on `$Bitmap:`/`$Sun:` entries - confirmed
+ *   against two real Blue Planet files: bp2-str.tbm (headerless `$Sun:`/`$Flare:` block)
+ *   AND bp-str.tbm, which goes a step further and pairs each headerless block with its
+ *   own bare `#end` closer anyway (real FSO doesn't care; `#end` with nothing open is a
+ *   no-op there) - hence suppressing BOTH "outside of any #Section block" AND "#End
+ *   found with no open #Section" below, not just the first.
+ * - mainhall.tbl/*-hall.tbm (`code/menuui/mainhallmenu.cpp`'s `parse_main_hall_table()`) -
+ *   genuinely, unconditionally headerless like ssm.tbl (no `#Section` open at all,
+ *   confirmed - just a few leading optional fields then a `$Main Hall`-keyed loop), but
+ *   UNLIKE ssm.tbl its lone `#End` at the very end IS required, not optional - so a real
+ *   mainhall.tbl/*-hall.tbm always trips "stray #End" too. Confirmed against two real
+ *   Blue Planet files (bp-main-hall.tbm, bp2-main-hall.tbm).
+ *
+ * - nebula.tbl and tips.tbl - both genuinely, unconditionally headerless (a bare
+ *   `+Nebula:`/`+Tip:` list with no section wrapper at all, closed by a bare `#End`),
+ *   confirmed against real Blue Planet copies of both. Neither table's real modular-
+ *   patch suffix (if either even has one) was tracked down, so only the base filename
+ *   is matched here.
+ *
+ * None of stars.tbl/mainhall.tbl/nebula.tbl/tips.tbl are otherwise supported by this
+ * project (no dedicated extractor/cross-references for any of them) - this only
+ * silences the structural false positives so editing one isn't drowned in noise.
  */
 function isOptionallyHeaderlessTableFile(uri: string): boolean {
-  return /(^|[\\/])(ssm|stars)\.tbl$|-(ssm|str)\.tbm$/i.test(uri);
+  return /(^|[\\/])(ssm|stars|mainhall|nebula|tips)\.tbl$|-(ssm|str|hall)\.tbm$/i.test(uri);
 }
 
 /**
@@ -160,9 +178,46 @@ function isOptionallyHeaderlessTableFile(uri: string): boolean {
  *   `#<language>` section tag, every entry is just `<index> "<string>" [offset] [offset]`
  *   with no sigil whatsoever, so every line in the file fails every check this parser
  *   knows and gets flagged as unrecognized/outside-any-section.
+ * - credits.tbl/*-crd.tbm (`code/menuui/credits.cpp`'s `credits_parse_table()`):
+ *   a handful of optional `$Field:` lines at the top (confirmed real, e.g. `$Text scroll
+ *   rate:`), then the ENTIRE rest of the file is slurped as raw scroll-credits display
+ *   text with no table grammar at all (names, roles, blank lines, bare `XSTR("...", -1)`
+ *   markers as literal text) - confirmed against a real Blue Planet credits.tbl that
+ *   produced ~300 "Unrecognized line" warnings, one per line of actual credits text.
+ * - hud_gauges.tbl/*-hdg.tbm (`code/hud/hudparse.cpp`'s `parse_hud_gauges_tbl()`): a
+ *   `#Gauge Config` section's `+Custom:`/etc. sub-blocks use a THIRD field convention
+ *   this parser has no concept of at all - bare `Key: value` lines with NO `$`/`+`/`@`
+ *   sigil whatsoever (confirmed: `optional_string("Origin:")`, `required_string("Name:")`,
+ *   at multiple call sites for different gauge types) - every one of those lines fails
+ *   every check this parser knows and is flagged as unrecognized. Confirmed against a
+ *   real Blue Planet mv_root-hdg.tbm that produced 700+ diagnostics this way. The
+ *   existing hudGaugesSchema's own field-order validation is sacrificed along with the
+ *   structural diagnostics by this exclusion, but that schema could only ever have
+ *   covered this file's top-level `$Field:`s anyway - the bulk of a real hud_gauges.tbm
+ *   is exactly the sigil-less content this parser can't represent.
+ *
+ * A second, related reason for exclusion (not "the grammar can't represent this at
+ * all", but "this table's SECTION BOUNDARIES don't work the way every other table's
+ * do"): some tables close a section implicitly, by the START of a specific next known
+ * header, rather than requiring an explicit `#End`/table-specific close token in
+ * between - a per-table structural quirk parser.ts has no way to know about generically
+ * (it would need each table's own list of valid "next section" names). Confirmed
+ * against real Blue Planet files for all three:
+ * - game_settings.tbl (`code/parse/scpui.h`... no dedicated .cpp found, but confirmed
+ *   from the file's own real shape): `#GAME SETTINGS`/`#CAMPAIGN SETTINGS`/etc. are bare
+ *   dividers with no scoping semantics at all - only the LAST section in the whole file
+ *   has a real closing `#End`. Also explicitly out of scope for schema/field-order
+ *   validation already (see schemas/index.ts's doc comment).
+ * - messages.tbl (`code/mission/missionmessage.cpp`): confirmed via
+ *   `while (required_string_one_of(3, "#Messages", "$Persona:", "#End"))` - `#Personas`
+ *   is terminated by EITHER `#End` OR the next section, `#Messages`, starting.
+ * - post_processing.tbl: `#Effects` runs until `#Ship Effects` starts, which runs until
+ *   `#Light Shafts` starts - only the LAST of the three has a real `#End`.
  */
 function isUnsupportedGrammarFile(uri: string): boolean {
-  return /(^|[\\/])(scripting|strings|tstrings)\.tbl$|-(sct|lcl|tlc)\.tbm$/i.test(uri);
+  return /(^|[\\/])(scripting|strings|tstrings|credits|hud_gauges|game_settings|messages|post_processing)\.tbl$|-(sct|lcl|tlc|crd|hdg)\.tbm$/i.test(
+    uri,
+  );
 }
 
 /** Per-document species-entry cache (currently just `$Default IFF:`), keyed by URI. */
@@ -945,9 +1000,24 @@ function validateAndPublish(document: TextDocument): void {
     // validate mission structure, so none of its own diagnostics apply there.
     ...(isMission
       ? []
-      : isOptionallyHeaderless
-        ? result.diagnostics.filter((d) => !d.message.endsWith("appears outside of any #Section block"))
-        : result.diagnostics),
+      : (isOptionallyHeaderless
+          ? result.diagnostics.filter(
+              (d) =>
+                !d.message.endsWith("appears outside of any #Section block") &&
+                d.message !== "#End found with no open #Section",
+            )
+          : result.diagnostics
+        ).filter(
+          // $Player Weapon Precedence: is a REAL top-level weapons.tbl field read
+          // AFTER the #Primary/#Secondary Weapons section's own #End (confirmed
+          // against weapons.cpp: `stuff_string_list(Player_weapon_precedence_names)`
+          // sits right after `required_string("#End")` in parse_weaponstbl()) -
+          // genuinely outside any #Section block per the real grammar too, not a
+          // mistake worth flagging. Filtered narrowly by exact message text (not a
+          // whole-file exemption) since every other weapons.tbl field IS properly
+          // scoped and should still get this warning if it's ever really misplaced.
+          (d) => d.message !== '"$Player Weapon Precedence" appears outside of any #Section block',
+        )),
     ...schemaDiagnostics,
     ...bankCountDiagnostics,
     ...bankWeaponNameDiagnostics,
