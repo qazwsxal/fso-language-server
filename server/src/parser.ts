@@ -77,7 +77,7 @@ const MULTILINE_END_MARKERS = new Set(["$end_multi_text", "$end_custom_data"]);
  * `$end_multi_text` - silently eating real data. Scoping to known multitext fields only
  * avoids that failure mode.
  */
-const MULTITEXT_FIELDS = new Set(["description", "tech description"]);
+const MULTITEXT_FIELDS = new Set(["description", "tech description", "promotion text"]);
 
 export function parseTable(text: string): ParseResult {
   // A leading UTF-8 BOM (U+FEFF - common in files saved by Windows editors like
@@ -196,6 +196,30 @@ export function parseTable(text: string): ParseResult {
         }
         entryValue = textLines.join("\n");
         i = j; // land on the sentinel line itself (or past EOF), consumed below
+        entryValueWasSpecialCased = true;
+      } else if (
+        currentSection &&
+        normalizeKey(currentSection.name) === "wing formations" &&
+        sigil === "$" &&
+        normalizeKey(key) === "name" &&
+        i + 1 < lines.length &&
+        stripLineComment(stripVersionTag(lines[i + 1])).trim().startsWith("(")
+      ) {
+        // Real grammar (`ship.cpp`'s `parse_wing_formation()`, called for a
+        // `#Wing Formations` section): a formation's `$Name:` is immediately followed
+        // by a completely bare, sigil-less `stuff_vec3d_list()` value spanning multiple
+        // lines - no `+Subfield:` wrapper of any kind, confirmed against a real
+        // wing_formations-shp.tbm. Consume it as part of this same field's value
+        // (paren-balance tracked, same mechanism as the generic list-continuation case
+        // above) so those lines aren't each flagged as "Unrecognized line".
+        let j = i + 1;
+        entryValue += "\n" + stripLineComment(stripVersionTag(lines[j]));
+        j++;
+        while (j < lines.length && parenBalance(entryValue) > 0) {
+          entryValue += "\n" + stripLineComment(stripVersionTag(lines[j]));
+          j++;
+        }
+        i = j - 1;
         entryValueWasSpecialCased = true;
       }
 

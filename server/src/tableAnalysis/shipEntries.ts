@@ -255,6 +255,23 @@ const TEXTURE_FIELDS = new Set([
   "ship_overhead",
   "thruster normal flame",
   "thruster afterburner flame",
+]);
+
+/**
+ * The four `$Briefing icon...:` fields are NOT plain texture fields even though they
+ * end up resolving a texture name: `parse_and_add_briefing_icon_info()` (ship.cpp)
+ * reads NO value on the `$Briefing icon:` line itself - the actual filename always
+ * comes from a nested `+Regular:` sub-field (with `+Fade:`/`+Highlight:` as further
+ * optional siblings). A real Blue Planet-family file (BtA) writes `+Regular:` on the
+ * SAME line as `$Briefing icon:` (e.g. `$Briefing icon: +Regular: iconapollo`) - since
+ * this project's parser is line-based (a new field requires a sigil at the START of a
+ * line, per parser.ts), that whole "+Regular: iconapollo" text was captured as if it
+ * were `$Briefing icon:`'s own raw value when these fields were (wrongly) included in
+ * TEXTURE_FIELDS, producing a false "texture ... not found" diagnostic literally
+ * containing the "+Regular:" text. Handled separately below instead, covering both the
+ * same-line and (the more common) next-line `+Regular:` shapes.
+ */
+const BRIEFING_ICON_FIELDS = new Set([
   "briefing icon",
   "briefing icon with cargo",
   "briefing wing icon",
@@ -339,6 +356,7 @@ const HANDLED_TOP_LEVEL_KEYS = new Set([
   "target priority groups",
   "flags",
   ...TEXTURE_FIELDS,
+  ...BRIEFING_ICON_FIELDS,
   ...SOUND_FIELDS,
 ]);
 
@@ -348,6 +366,8 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
   let current: ShipEntryInfo | null = null;
   let inSubsystemScope = false;
   let currentSubsystem: ShipSubsystemRef | null = null;
+  /** Set when a `$Briefing icon...:` field with no inline `+Regular:` was just seen, so the NEXT `+Regular:` field (on a following line) is known to belong to it. */
+  let pendingBriefingIconField: string | null = null;
 
   for (const section of sections) {
     if (section.name.trim().toLowerCase() !== "ship classes") {
@@ -406,6 +426,7 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
         entries.push(current);
         inSubsystemScope = false;
         currentSubsystem = null;
+        pendingBriefingIconField = null;
         continue;
       }
       if (!current) {
@@ -414,6 +435,24 @@ export function extractShipEntries(sections: TableSection[]): ShipEntryInfo[] {
 
       if (TEXTURE_FIELDS.has(key) && field.value.trim()) {
         current.textureRefs.push({ sigil: field.sigil, field: field.key.trim(), line: field.line, value: field.value.trim() });
+      }
+
+      if (field.sigil === "$" && !BRIEFING_ICON_FIELDS.has(key)) {
+        // Any other top-level field ends the window in which a following `+Regular:`
+        // could belong to a pending briefing-icon field.
+        pendingBriefingIconField = null;
+      }
+
+      if (field.sigil === "$" && BRIEFING_ICON_FIELDS.has(key)) {
+        const inlineMatch = /\+Regular:\s*([^+]*)/i.exec(field.value);
+        if (inlineMatch && inlineMatch[1].trim()) {
+          current.textureRefs.push({ sigil: "+", field: field.key.trim(), line: field.line, value: inlineMatch[1].trim() });
+        } else {
+          pendingBriefingIconField = field.key.trim();
+        }
+      } else if (field.sigil === "+" && key === "regular" && pendingBriefingIconField && field.value.trim()) {
+        current.textureRefs.push({ sigil: "+", field: pendingBriefingIconField, line: field.line, value: field.value.trim() });
+        pendingBriefingIconField = null;
       }
 
       if (SOUND_FIELDS.has(key) && field.value.trim()) {

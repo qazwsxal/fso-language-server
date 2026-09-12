@@ -175,6 +175,38 @@ test("continues a parenthesized list value across many lines even with zero quot
   assert.equal(result.diagnostics.filter((d) => /Unrecognized line/.test(d.message)).length, 0);
 });
 
+test("consumes a bare, sigil-less parenthesized vec3d list following $Name: in a #Wing Formations section (real wing_formations-shp.tbm shape)", () => {
+  const text = [
+    "#Wing Formations",
+    "",
+    "$Name: Double Vic",
+    "(( 0.50, 0.25,-0.50)",
+    " (-0.50, 0.25,-0.50)",
+    " ( 0.00, 1.00,-1.00)",
+    " ( 0.50, 1.25,-1.50)",
+    " (-0.50,-1.25,-1.50))",
+    "",
+    "$Name: Finger Four",
+    "((-0.50,-0.25,-0.50)",
+    " ( 1.50, 1.25,-1.50)",
+    " ( 1.75, 1.00,-1.75)",
+    " (-1.50, 1.25,-1.50)",
+    " (-1.75, 1.00,-1.75))",
+  ].join("\n");
+  const result = parseTable(text);
+  assert.equal(result.diagnostics.filter((d) => /Unrecognized line/.test(d.message)).length, 0);
+  const entries = result.sections[0].entries;
+  assert.equal(entries.length, 2);
+  assert.ok(entries[0].value.includes("0.50, 0.25,-0.50"));
+  assert.ok(entries[1].value.includes("1.75, 1.00,-1.75"));
+});
+
+test("does not treat a bare list following $Name: as a wing-formation value outside a #Wing Formations section", () => {
+  const text = ["#Ship Classes", "$Name: GTF Ulysses", "(1, 2, 3)", "#End"].join("\n");
+  const result = parseTable(text);
+  assert.equal(result.diagnostics.filter((d) => /Unrecognized line/.test(d.message)).length, 1);
+});
+
 test("does not keep emitting a fresh #Section warning for every field in a genuinely sectionless table (real bp-main-hall.tbm shape)", () => {
   const text = ["$Num Resolutions: 2", "$Main Hall", "+Name: BP1-Start", "+Bitmap: BP1-Mainhall640"].join("\n");
   const result = parseTable(text);

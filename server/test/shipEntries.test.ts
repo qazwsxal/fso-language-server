@@ -221,3 +221,37 @@ test("extracts $Ship IFF Colors:'s +Seen By:/+When IFF Is: as two iff_defs.tbl n
     ["Seen By=Friendly@3", "When IFF Is=Hostile@4", "Seen By=Hostile@7", "When IFF Is=Friendly@8"],
   );
 });
+
+test("extracts $Briefing icon:'s texture name from a +Regular: sub-field on the NEXT line (the normal multi-line shape)", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "$Briefing icon:",
+    "+Regular: iconulysses",
+    "+Fade: fadeiconulysses",
+    "+Highlight: iconhighlight04",
+    "#End",
+  ].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.deepEqual(
+    ship.textureRefs.map((r) => `${r.field}=${r.value}@${r.line}`),
+    ["Briefing icon=iconulysses@3"],
+  );
+});
+
+test("extracts $Briefing icon:'s texture name from a +Regular: sub-field on the SAME line (real BtA ships.tbl shape) instead of the literal '+Regular: ...' text", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Apollo",
+    "$Briefing icon: +Regular: iconapollo",
+    "+Fade: fadeiconapollo",
+    "+Highlight: iconhighlight04",
+    "$Briefing wing icon: +Regular: iconapollow",
+    "#End",
+  ].join("\n");
+  const [ship] = extractShipEntries(parseTable(text).sections);
+  assert.deepEqual(
+    ship.textureRefs.map((r) => `${r.field}=${r.value}@${r.line}`),
+    ["Briefing icon=iconapollo@2", "Briefing wing icon=iconapollow@5"],
+  );
+});

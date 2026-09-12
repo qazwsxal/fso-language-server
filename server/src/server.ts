@@ -1016,7 +1016,17 @@ function validateAndPublish(document: TextDocument): void {
           // mistake worth flagging. Filtered narrowly by exact message text (not a
           // whole-file exemption) since every other weapons.tbl field IS properly
           // scoped and should still get this warning if it's ever really misplaced.
-          (d) => d.message !== '"$Player Weapon Precedence" appears outside of any #Section block',
+          //
+          // Same real grammar shape for asteroid.tbl's $Impact Explosion Effect:/
+          // $Impact Explosion:/$Impact Explosion Radius: - confirmed against
+          // asteroid.cpp's asteroid_parse_tbl(): all three are read right after the
+          // #Asteroid Types section's own required_string("#End") (a real Between the
+          // Ashes asteroid.tbl uses this shape).
+          (d) =>
+            d.message !== '"$Player Weapon Precedence" appears outside of any #Section block' &&
+            d.message !== '"$Impact Explosion Effect" appears outside of any #Section block' &&
+            d.message !== '"$Impact Explosion" appears outside of any #Section block' &&
+            d.message !== '"$Impact Explosion Radius" appears outside of any #Section block',
         )),
     ...schemaDiagnostics,
     ...bankCountDiagnostics,

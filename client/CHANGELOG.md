@@ -4,6 +4,46 @@ All notable changes to the "FreeSpace Open Language Server" extension are docume
 
 ## [0.0.2] - Unreleased
 
+Validated against several other large, real-world mods (Between the Ashes, Blackwater
+Operations) beyond Blue Planet, surfacing and fixing more real false positives:
+
+- Fixed a real, always-on false positive (not just `unknownFieldSeverity` noise): a
+  ship's `$Briefing icon:`/`$Briefing icon with cargo:`/`$Briefing wing icon:`/`$Briefing
+  wing icon with cargo:` never has its own value - the real texture name always comes
+  from a nested `+Regular:` sub-field - but this extension was reading the raw text after
+  the field's own colon as if it were the texture name. This happened to work by
+  accident for the common multi-line layout (nothing on the `$Briefing icon:` line
+  itself, so there was nothing to misread) but broke for a real, valid layout (`+Regular:`
+  on the SAME line, e.g. `$Briefing icon: +Regular: iconapollo`) - the literal text
+  "+Regular: iconapollo" was reported as a missing texture. Now resolves the real
+  `+Regular:` value in both layouts.
+- Ships.tbl's `$Gravity Const:` and `$Animations:`/`$Driven Animations:`/`$Animation
+  Moveables:` are real ship-level fields (confirmed against ship.cpp) that happen to
+  share a name with real weapons.tbl fields - missing from ships.tbl's own field list,
+  they triggered a false "weapons.tbl field, not recognized in ships.tbl" warning on
+  every entry that used them.
+- asteroid.tbl's field list was missing `Display Name`/`Type`/`Rotational Velocity
+  Multiplier`/`Explosion Effect`/`Breakup Delay`/`Expl inner rad`/`Expl outer rad`/`Expl
+  damage`/`Expl blast`/`Hitpoints`/`Split`/`Split name`/`Spawn Weight`/`Gravity Const`
+  entirely - the five `Expl .../Hitpoints` fields happen to share a name with real
+  ships.tbl fields, so a real asteroid.tbl that sets them (as most do) got a false
+  "ships.tbl field, not recognized in asteroid.tbl" warning on every single entry, an
+  always-on false positive just like the ships.tbl one above. Also stopped flagging
+  asteroid.tbl's real `$Impact Explosion Effect:`/`$Impact Explosion:`/`$Impact Explosion
+  Radius:` fields, which - like weapons.tbl's `$Player Weapon Precedence:` - genuinely
+  sit after the table's own `#End`.
+- rank.tbl had `Promotion Text`/`Promotion Voice Base` the wrong way around (confirmed
+  against `scoring.cpp`), flagging a real, correctly-ordered rank.tbl as "out of order";
+  also added the real `Alt Name`/`Title` fields and recognized `$Promotion Text:` as a
+  multi-line (`$end_multi_text`-terminated) field, like `$Description:`.
+- medals.tbl was missing `Alt Name`/`Wavefile 1`/`Wavefile 2`/`Wavefile Base`/`Promotion
+  Text` (the last shared with rank.tbl, same false-positive pattern as above).
+- A ship-formation table's `$Name:` (in a `#Wing Formations` section) is followed by a
+  completely bare, sigil-less list of vectors spanning many lines - a real grammar shape
+  this extension's line-based parser had no way to represent, so every line of the list
+  was flagged as "Unrecognized line". Now recognized and consumed as part of the `$Name:`
+  field's own value, matching the real `stuff_vec3d_list()` parsing behavior.
+
 Many more ships.tbl/weapons.tbl cross-references, plus three previously-unsupported
 tables that back some of them - all ground-truthed directly against the FSO C++ source
 rather than guessed:

@@ -93,6 +93,7 @@ export const shipsSchema: TableSchema = {
     "Impact Spew",
     "Damage Spew Effect",
     "Damage Spew",
+    "Gravity Const",
     "Dying Gravity Const",
     "Debris",
     "Density",
@@ -229,6 +230,9 @@ export const shipsSchema: TableSchema = {
     "Radar Image 2D",
     "Ship IFF Colors",
     "Target Priority Groups",
+    "Animations",
+    "Driven Animations",
+    "Animation Moveables",
     "Subsystem",
   ],
   /**
