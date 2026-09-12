@@ -2,10 +2,11 @@
 
 All notable changes to the "FreeSpace Open Language Server" extension are documented in this file.
 
-## [0.0.2] - Unreleased
+## [0.0.2] - 2026-09-12
 
 Validated end-to-end against several large real-world mods (Blue Planet Complete,
-Between the Ashes, Blackwater Operations Dump, Warmachine).
+Between the Ashes, Blackwater Operations Dump, Warmachine, The Sixth Seal, The Sixth
+Seal 2, Star Fox: Event Horizon, Solaris).
 
 ### New settings
 
@@ -15,7 +16,8 @@ Between the Ashes, Blackwater Operations Dump, Warmachine).
 ### New table support
 
 - `intel.tbl` (and its legacy name, `species.tbl`).
-- `colors.tbl`, `mflash.tbl`, `ssm.tbl`.
+- `colors.tbl`, `mflash.tbl`, `ssm.tbl`, `curves.tbl`.
+- `menu.tbl` (Training/Simulator room screens) - previously skipped entirely.
 - `scripting.tbl` Lua is now understood, and flagged if it has a silent-failure gotcha
   FSO itself won't warn about.
 - `strings.tbl`/`tstrings.tbl`, `credits.tbl`/`credits-footer.tbl`, `hud_gauges.tbl`,
@@ -28,6 +30,15 @@ Between the Ashes, Blackwater Operations Dump, Warmachine).
 - Go to Definition/hover for more fields: weapon armor type, substitute list, homing
   restrictions; ship countermeasure type, IFF colors, flags list.
 - Ship template references now resolve.
+- Autocomplete suggests field names for `+`/`@` fields too, not just `$`, and covers
+  every field this extension already cross-references - model files, countermeasure
+  type, default team, muzzleflash, SSM, ship/species/IFF lists, ship templates, and
+  briefing icons among them.
+- Quick fixes: reorder a field flagged as out of place, insert or remove a missing/stray
+  `#End`, and "did you mean X?" suggestions for a mistyped cross-reference (armor type,
+  species, IFF, sound, texture, and more).
+- Individually-compressed loose model/texture files (`.lz41`) now resolve correctly, not
+  just ones packed inside a `.vp`.
 
 ### Fewer false warnings
 
@@ -41,8 +52,12 @@ Between the Ashes, Blackwater Operations Dump, Warmachine).
   `nodemap.tbl`, `*-smap.tbm`, and a few SCPUI tables.
 - References resolved only through FSO's built-in defaults are no longer flagged missing.
 - Fields that legitimately sit after a table's closing marker are no longer flagged.
+- Autocomplete for a field name (like `$Mass:`) could silently show nothing depending on
+  how much you'd already typed - fixed.
+- Autocomplete no longer offers a ship's top-level fields while you're inside a
+  `$Subsystem:` block, where they don't apply.
 
-## [0.0.1] - Unreleased
+## [0.0.1] - 2026-09-10
 
 Initial packaging for the VS Code Marketplace. Highlights:
 

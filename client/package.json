@@ -2,7 +2,7 @@
   "name": "freespace-open-language-server",
   "displayName": "FreeSpace Open Language Server",
   "description": "Language support and tools for FreeSpace Open modding: tables, models, missions and more.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "qazwsxal",
   "license": "MIT",
   "repository": {"url": "https://github.com/qazwsxal/freespace-open-language-server"},
