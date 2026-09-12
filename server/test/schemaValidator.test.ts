@@ -7,6 +7,7 @@ import { shipsSchema } from "../src/schemas/ships";
 import { mainhallSchema } from "../src/schemas/mainhall";
 import { objectTypesSchema } from "../src/schemas/objectTypes";
 import { intelSchema } from "../src/schemas/intel";
+import { curvesSchema } from "../src/schemas/curves";
 
 test("does not flag $Impact Explosion:/$Impact Explosion Radius: as out-of-order when they follow $Trail: (real missile weapons.tbl shape)", () => {
   const text = [
@@ -88,6 +89,23 @@ test("mainhallSchema activates on a real, genuinely headerless mainhall.tbl (bar
   const diagnostics = validateAgainstSchema(sections, mainhallSchema, "error");
   assert.equal(diagnostics.length, 1);
   assert.match(diagnostics[0].message, /out of the expected field order/i);
+});
+
+test("curvesSchema matches a real #Curves/$Name:/$Keyframes: shape and does not false-positive", () => {
+  // Confirmed against `code/math/curve.cpp`'s parse_curve_table(): required_string("#Curves")
+  // then a while(optional_string("$Name:")) loop whose Curve::ParseData() immediately does
+  // required_string("$Keyframes:") - so $Name: then $Keyframes: is the only real order.
+  const text = [
+    "#Curves",
+    "",
+    "$Name: WalkerSpeedCurve",
+    "$Keyframes:",
+    "(0, 0): Linear",
+    "(100, 4.0): Constant",
+  ].join("\n");
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, curvesSchema, "error");
+  assert.deepEqual(diagnostics, []);
 });
 
 test("does not flag $Target Priority Groups: in an objecttypes.tbl #Ship Types entry - genuinely shared with ships.tbl (real Blue Planet false positive)", () => {
