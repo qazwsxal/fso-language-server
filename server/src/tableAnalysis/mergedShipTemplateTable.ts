@@ -20,6 +20,11 @@ export interface EffectiveShipTemplateEntry {
   layerSources: string[];
 }
 
+/** Unique ship-template names in their original (first-seen) casing - for completion display, where lowercasing would look wrong. */
+export function collectDisplayShipTemplateNames(templateTable: Map<string, EffectiveShipTemplateEntry>): string[] {
+  return Array.from(templateTable.values()).map((e) => e.name);
+}
+
 /**
  * Builds the "effective" merged view of every `#Ship Templates` entry across the whole
  * active mod's search path. Templates live in the SAME files as ship classes

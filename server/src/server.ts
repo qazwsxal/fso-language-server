@@ -29,8 +29,12 @@ import { parseMenuTable } from "./menuTableParser";
 import { findSchemaForFile, TableSchema } from "./schemas";
 import { validateAgainstSchema, UnknownFieldSeverity } from "./schemaValidator";
 import { extractShipEntries, findCurrentShipEntry, ShipEntryInfo, ShipTextureRef, KNOWN_SHIP_FLAGS } from "./tableAnalysis/shipEntries";
-import { buildEffectiveShipTable, EffectiveShipEntry } from "./tableAnalysis/mergedShipTable";
-import { buildEffectiveShipTemplateTable, EffectiveShipTemplateEntry } from "./tableAnalysis/mergedShipTemplateTable";
+import { buildEffectiveShipTable, collectDisplayShipNames, EffectiveShipEntry } from "./tableAnalysis/mergedShipTable";
+import {
+  buildEffectiveShipTemplateTable,
+  collectDisplayShipTemplateNames,
+  EffectiveShipTemplateEntry,
+} from "./tableAnalysis/mergedShipTemplateTable";
 import { extractWeaponEntries, WeaponEntryInfo, WeaponTextureRef, WeaponNameListKind } from "./tableAnalysis/weaponEntries";
 import { buildEffectiveWeaponsTable, collectDisplayWeaponNames, EffectiveWeaponEntry } from "./tableAnalysis/mergedWeaponsTable";
 import {
@@ -65,9 +69,18 @@ import { extractMedalEntries } from "./tableAnalysis/medalsEntries";
 import { buildEffectiveMedalsTable, EffectiveMedalEntry } from "./tableAnalysis/mergedMedalsTable";
 import { extractRankEntries } from "./tableAnalysis/rankEntries";
 import { buildEffectiveRankTable, EffectiveRankEntry } from "./tableAnalysis/mergedRankTable";
-import { buildEffectiveTeamColorTable, EffectiveTeamColorEntry } from "./tableAnalysis/mergedColorsTable";
-import { buildEffectiveMflashTable, EffectiveMflashEntry } from "./tableAnalysis/mergedMflashTable";
-import { buildEffectiveSsmTable, resolveSsmReference, EffectiveSsmEntry } from "./tableAnalysis/mergedSsmTable";
+import {
+  buildEffectiveTeamColorTable,
+  collectDisplayTeamColorNames,
+  EffectiveTeamColorEntry,
+} from "./tableAnalysis/mergedColorsTable";
+import { buildEffectiveMflashTable, collectDisplayMflashNames, EffectiveMflashEntry } from "./tableAnalysis/mergedMflashTable";
+import {
+  buildEffectiveSsmTable,
+  resolveSsmReference,
+  collectDisplaySsmNames,
+  EffectiveSsmEntry,
+} from "./tableAnalysis/mergedSsmTable";
 import { extractAiProfileEntries } from "./tableAnalysis/aiProfilesEntries";
 import { buildEffectiveAiProfilesTable, EffectiveAiProfileEntry } from "./tableAnalysis/mergedAiProfilesTable";
 import { extractSoundEntries } from "./tableAnalysis/soundsEntries";
@@ -3014,7 +3027,56 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
     }
   }
 
-  const textureFieldMatch = /^\s*[$+@]([A-Za-z_][A-Za-z0-9 _]*?)\s*:\s*\S*$/.exec(linePrefix);
+  // Every parenthesized/quoted name-LIST field this project cross-references, other than
+  // $Default PBanks:/$Default SBanks: (handled above, since those also need ship/turret
+  // context) and $Explosion Animations:/$Target Priority Groups: (handled above too) -
+  // see computeWeaponNameListDiagnostics()/computeShipIffColorDiagnostics() for the
+  // confirmed FSO source citation behind each mapping. "species"/"proximity species" are
+  // gated to the "+" sigil specifically, to tell a weapon's `+Species:` homing
+  // restriction (a list) apart from a ship's own single-value `$Species:` (handled by
+  // SINGLE_CROSS_REF_FIELD_SOURCES above) - every other key here is unambiguous either way.
+  const listFieldMatch = /^\s*([$+@])([A-Za-z_][A-Za-z0-9 _]*?)\s*:/i.exec(linePrefix);
+  if (listFieldMatch) {
+    const listSigil = listFieldMatch[1];
+    const listFieldKey = listFieldMatch[2].trim().toLowerCase();
+    const listSource =
+      listFieldKey === "species" || listFieldKey === "proximity species"
+        ? listSigil === "+"
+          ? (d: string[]) => collectDisplaySpeciesNames(getEffectiveSpeciesTable(d))
+          : undefined
+        : LIST_CROSS_REF_FIELD_SOURCES[listFieldKey];
+    if (listSource) {
+      const range = computeOpenBankTokenRange(doc, params.position);
+      if (range) {
+        try {
+          const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
+          // A blank name is a real, if unhelpful, possibility - e.g. ssm.tbl entries are
+          // keyed by 0-based index, not a distinct name field (confirmed against a real
+          // Blue Planet Complete ssm.tbl: every $SSM: entry has no name of its own at
+          // all) - not worth offering as a completion item either way.
+          const names = listSource(searchDirs)
+            .filter((n) => n.length > 0)
+            .sort();
+          return names.map((name) => ({
+            label: name,
+            kind: CompletionItemKind.EnumMember,
+            filterText: name,
+            textEdit: { range, newText: name },
+          }));
+        } catch {
+          return [];
+        }
+      }
+    }
+  }
+
+  // Deliberately NOT anchored to the start of the line (unlike listFieldMatch above) -
+  // a `$Briefing icon: +Regular: icona` real BtA-shape line (see SHIP_TEXTURE_FIELD_KEYS'
+  // "regular" entry's doc comment) packs an earlier, unrelated `sigil field:` pair
+  // before the one actually being completed; without the anchor, the regex engine finds
+  // the LAST such pair on the line (the only one whose trailing `\S*$` can actually
+  // reach the end of the string), which is the one the cursor is really sitting in.
+  const textureFieldMatch = /[$+@]([A-Za-z_][A-Za-z0-9 _]*?)\s*:\s*\S*$/.exec(linePrefix);
   if (textureFieldMatch) {
     const fieldKey = textureFieldMatch[1].trim().toLowerCase();
 
@@ -3034,7 +3096,7 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
       }
     }
 
-    if (fieldKey === "pof file" || fieldKey === "model file") {
+    if (POF_MODEL_FIELD_KEYS.has(fieldKey)) {
       try {
         const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
         const names = getSortedPofFileNames(searchDirs);
@@ -3066,67 +3128,23 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
       }
     }
 
-    // Cross-table completion: a ship's $Armor Type:/$Shield Armor Type: completes from
-    // armor.tbl's entry names; a weapon's $Damage Type: completes from every distinct
-    // damage-type string used anywhere in armor.tbl's $Damage Type: entries.
-    if (fieldKey === "armor type" || fieldKey === "shield armor type" || fieldKey === "damage type") {
+    // Every single-value `$Field:`/`+Subfield:` this project cross-references against
+    // another table, keyed by lowercased field name - see each field's matching
+    // computeXDiagnostics() function above for the confirmed FSO source citation. "species"/
+    // "damage type" etc. use their field name alone since none collide across ships.tbl/
+    // weapons.tbl in a way that would need sigil-based disambiguation (unlike the
+    // parenthesized LIST fields below, where +Species:'s per-weapon homing restriction
+    // DOES need to be told apart from a ship's own single-value $Species:).
+    const singleCrossRefSource = SINGLE_CROSS_REF_FIELD_SOURCES[fieldKey];
+    if (singleCrossRefSource) {
       try {
         const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
-        const armorTable = getEffectiveArmorTable(searchDirs);
-        const range = computeLineValueRange(doc, params.position.line);
-        const names =
-          fieldKey === "damage type"
-            ? collectDisplayDamageTypes(armorTable).sort()
-            : Array.from(armorTable.values())
-                .map((e) => e.name)
-                .sort();
-        return names.map((name) => ({
-          label: name,
-          kind: CompletionItemKind.EnumMember,
-          filterText: name,
-          textEdit: { range, newText: name },
-        }));
-      } catch {
-        return [];
-      }
-    }
-
-    if (fieldKey === "species") {
-      try {
-        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
-        const names = collectDisplaySpeciesNames(getEffectiveSpeciesTable(searchDirs)).sort();
-        const range = computeLineValueRange(doc, params.position.line);
-        return names.map((name) => ({
-          label: name,
-          kind: CompletionItemKind.EnumMember,
-          filterText: name,
-          textEdit: { range, newText: name },
-        }));
-      } catch {
-        return [];
-      }
-    }
-
-    if (fieldKey === "ai class") {
-      try {
-        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
-        const names = collectDisplayAiClassNames(getEffectiveAiClassTable(searchDirs)).sort();
-        const range = computeLineValueRange(doc, params.position.line);
-        return names.map((name) => ({
-          label: name,
-          kind: CompletionItemKind.EnumMember,
-          filterText: name,
-          textEdit: { range, newText: name },
-        }));
-      } catch {
-        return [];
-      }
-    }
-
-    if (fieldKey === "default iff") {
-      try {
-        const searchDirs = buildSearchPath(fileURLToPath(params.textDocument.uri));
-        const names = collectDisplayIffNames(getEffectiveIffTable(searchDirs)).sort();
+        // A blank name is a real, if unhelpful, possibility - see the matching filter
+        // in the parenthesized-LIST-field branch above for why (ssm.tbl entries have no
+        // name field of their own at all).
+        const names = singleCrossRefSource(searchDirs)
+          .filter((n) => n.length > 0)
+          .sort();
         const range = computeLineValueRange(doc, params.position.line);
         return names.map((name) => ({
           label: name,
@@ -3168,8 +3186,78 @@ const SHIP_TEXTURE_FIELD_KEYS = new Set([
   "briefing icon with cargo",
   "briefing wing icon",
   "briefing wing icon with cargo",
+  // The four `$Briefing icon...:` keys above never actually trigger completion in
+  // practice - confirmed empirically against the real running server - because the
+  // textureFieldMatch regex requires the WHOLE line to be exactly one `sigil field:
+  // value` shape, and a `$Briefing icon:` line's own real value always lives on a
+  // nested `+Regular:` sub-field instead (same line or the next one - see
+  // shipEntries.ts's doc comment on TEXTURE_FIELDS: `parse_and_add_briefing_icon_info()`
+  // reads NO value from the `$Briefing icon:` line itself). "regular" is the field that
+  // actually needs to trigger completion.
+  "regular",
 ]);
 const WEAPON_TEXTURE_FIELD_KEYS = new Set(["hud image", "laser bitmap", "laser glow", "icon", "anim", "tech anim"]);
+
+/**
+ * Every ships.tbl/weapons.tbl field key that references a `.pof` model, completing from
+ * the same POF-file index used by "pof file"/"model file" - see computeShipModelDiagnostics()/
+ * computeWeaponModelDiagnostics() for the matching cross-reference checks against each of these.
+ */
+const POF_MODEL_FIELD_KEYS = new Set([
+  "pof file",
+  "model file",
+  "cockpit pof file",
+  "pof file techroom",
+  "pof target file",
+  "tech model",
+  "external model file",
+  "generic debris pof file",
+]);
+
+/**
+ * Every single-value (not parenthesized-list) `$Field:`/`+Subfield:` this project
+ * cross-references against another table, keyed by lowercased field name, to the
+ * function that collects display names for its target table - see each field's
+ * matching computeXDiagnostics() function for the confirmed FSO source citation behind
+ * each mapping. Deliberately unsorted here (sorted once at the call site) since a
+ * `Record` doesn't preserve a meaningful order anyway.
+ */
+const SINGLE_CROSS_REF_FIELD_SOURCES: Record<string, (searchDirs: string[]) => string[]> = {
+  // A weapon's own $Armor Type:/$Shield Armor Type: (computeWeaponArmorTypeDiagnostics)
+  // shares these two field names with a ship's $Armor Type:/$Shield Armor Type:
+  // (computeArmorTypeDiagnostics) - both resolve against armor.tbl either way, so no
+  // disambiguation is needed.
+  "armor type": (d) => Array.from(getEffectiveArmorTable(d).values()).map((e) => e.name),
+  "shield armor type": (d) => Array.from(getEffectiveArmorTable(d).values()).map((e) => e.name),
+  "damage type": (d) => collectDisplayDamageTypes(getEffectiveArmorTable(d)),
+  species: (d) => collectDisplaySpeciesNames(getEffectiveSpeciesTable(d)),
+  "ai class": (d) => collectDisplayAiClassNames(getEffectiveAiClassTable(d)),
+  "default iff": (d) => collectDisplayIffNames(getEffectiveIffTable(d)),
+  "countermeasure type": (d) => collectDisplayWeaponNames(getEffectiveWeaponsTable(d)),
+  "default team": (d) => collectDisplayTeamColorNames(getEffectiveTeamColorTable(d)),
+  muzzleflash: (d) => collectDisplayMflashNames(getEffectiveMflashTable(d)),
+  ssm: (d) => collectDisplaySsmNames(getEffectiveSsmTable(d)),
+  "use template": (d) => collectDisplayShipTemplateNames(getEffectiveShipTemplateTable(d)),
+  "use ship as template": (d) => collectDisplayShipNames(getEffectiveShipTable(d)),
+  "seen by": (d) => collectDisplayIffNames(getEffectiveIffTable(d)),
+  "when iff is": (d) => collectDisplayIffNames(getEffectiveIffTable(d)),
+};
+
+/**
+ * Every parenthesized/quoted name-LIST `+Subfield:` this project cross-references,
+ * keyed by lowercased field name - see NAME_LIST_FIELDS in weaponEntries.ts for the
+ * authoritative field-name-to-target-table mapping this mirrors ("species"/"proximity
+ * species" are handled separately at the call site, since they need "+" sigil gating to
+ * tell them apart from a ship's own single-value `$Species:`).
+ */
+const LIST_CROSS_REF_FIELD_SOURCES: Record<string, (searchDirs: string[]) => string[]> = {
+  "ship types": (d) => objectTypesDisplayNamesForKind(getEffectiveObjectTypesTable(d), "ship-types"),
+  "ship classes": (d) => collectDisplayShipNames(getEffectiveShipTable(d)),
+  iffs: (d) => collectDisplayIffNames(getEffectiveIffTable(d)),
+  "proximity type": (d) => objectTypesDisplayNamesForKind(getEffectiveObjectTypesTable(d), "ship-types"),
+  "proximity class": (d) => collectDisplayShipNames(getEffectiveShipTable(d)),
+  "proximity iff": (d) => collectDisplayIffNames(getEffectiveIffTable(d)),
+};
 
 /**
  * Every ships.tbl/weapons.tbl field key confirmed (see [[fso-gamesnd-lookup]] project

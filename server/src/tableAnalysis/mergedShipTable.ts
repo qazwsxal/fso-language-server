@@ -68,6 +68,11 @@ export interface EffectiveShipEntry {
   layerSources: string[];
 }
 
+/** Unique ship class names in their original (first-seen) casing - for completion display, where lowercasing would look wrong. */
+export function collectDisplayShipNames(shipTable: Map<string, EffectiveShipEntry>): string[] {
+  return Array.from(shipTable.values()).map((e) => e.name);
+}
+
 /**
  * Builds the "effective" merged ships.tbl view across the whole active mod's search
  * path, per the fso-table-format/.tbm merge algorithm: the base ships.tbl is read only
