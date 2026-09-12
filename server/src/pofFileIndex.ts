@@ -35,8 +35,14 @@ export function buildPofFileIndex(searchDirs: string[]): Map<string, PofFileInde
     const fullDir = path.join(dir, ...MODEL_DIR.split("/"));
     try {
       for (const f of fs.readdirSync(fullDir)) {
-        if (path.extname(f).toLowerCase() === ".pof") {
-          record(f, { kind: "loose", containerPath: path.join(fullDir, f) });
+        // A loose .pof can be individually LZ41-compressed on disk as `<name>.pof.lz41`
+        // (see resolver.ts's resolveFile() doc comment - confirmed against a real
+        // Solaris 3.0.2 install) - the logical name modders reference is still
+        // `<name>.pof`, with the actual `.lz41`-suffixed path kept as containerPath so
+        // readResolvedFile() can find and transparently decompress it.
+        const logicalName = /\.pof\.lz41$/i.test(f) ? f.slice(0, -".lz41".length) : f;
+        if (path.extname(logicalName).toLowerCase() === ".pof") {
+          record(logicalName, { kind: "loose", containerPath: path.join(fullDir, f) });
         }
       }
     } catch {

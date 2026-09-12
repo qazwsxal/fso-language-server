@@ -3,7 +3,7 @@ import * as path from "path";
 import { parseModIni } from "./modIni";
 import { parseModJson, collectPackageDependencyIds, ModJson } from "./modJson";
 import { pickBestVersion } from "./semver";
-import { readVpIndex, readVpEntry, findVpEntry, isVpArchiveFilename, VpArchive } from "../vp/reader";
+import { readVpIndex, readVpEntry, findVpEntry, isVpArchiveFilename, VpArchive, decompressLz41 } from "../vp/reader";
 
 export interface ResolvedFile {
   kind: "loose" | "vp";
@@ -277,6 +277,19 @@ export function resolveFile(searchDirs: string[], relativePath: string): Resolve
       return { kind: "loose", containerPath: loosePath };
     }
 
+    // A loose file can also be individually LZ41-compressed, stored on disk as
+    // `<name>.<ext>.lz41` (confirmed against `code/cfile/cfilesystem.cpp`'s directory
+    // scan, which strips a trailing ".lz41" before matching it against a path type's
+    // known extensions - decompression itself is "entirely payload-driven, not gated on
+    // the .vp/.vpc filename convention", the same LZ41 framing already handled for VP
+    // entries by decompressLz41(), just applied to a whole standalone file instead of
+    // one archive entry). Confirmed against a real Solaris 3.0.2 install, where every
+    // model/texture under data/models and data/maps is stored exactly this way.
+    const compressedLoosePath = `${loosePath}.lz41`;
+    if (fs.existsSync(compressedLoosePath) && fs.statSync(compressedLoosePath).isFile()) {
+      return { kind: "loose", containerPath: compressedLoosePath };
+    }
+
     let vpFiles: string[] = [];
     try {
       vpFiles = fs
@@ -375,7 +388,15 @@ export function describeResolvedSource(resolved: ResolvedFile): string {
 
 export function readResolvedFile(resolved: ResolvedFile): Buffer {
   if (resolved.kind === "loose") {
-    return fs.readFileSync(resolved.containerPath);
+    const buf = fs.readFileSync(resolved.containerPath);
+    // Mirrors readVpEntry()'s own magic-byte check - a standalone loose file can be
+    // individually LZ41-compressed too (see resolveFile()'s doc comment), and real FSO
+    // decompresses based on the payload's own "LZ41" header, not the ".lz41" filename
+    // suffix, so this checks the same way rather than trusting containerPath's extension.
+    if (buf.length >= 4 && buf.toString("ascii", 0, 4) === "LZ41") {
+      return decompressLz41(buf);
+    }
+    return buf;
   }
   const archive = getVpIndex(resolved.containerPath);
   if (!archive) {

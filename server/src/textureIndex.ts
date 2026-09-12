@@ -17,11 +17,17 @@ const TEXTURE_EXTENSIONS = new Set(["dds", "tga", "pcx", "png", "jpg", "jpeg", "
 
 /** Strips a known texture/animation extension and returns the bare, lowercased basename - FSO table fields reference textures without an extension. */
 function bareName(filename: string): string | null {
-  const ext = path.extname(filename).slice(1).toLowerCase();
+  // A loose texture file can be individually LZ41-compressed on disk as
+  // `<name>.<ext>.lz41` (see resolver.ts's resolveFile() doc comment - confirmed
+  // against a real Solaris 3.0.2 install, where every data/maps texture is stored this
+  // way) - strip that suffix first so the real extension underneath is what gets
+  // checked against TEXTURE_EXTENSIONS.
+  const withoutLz41 = /\.lz41$/i.test(filename) ? filename.slice(0, -".lz41".length) : filename;
+  const ext = path.extname(withoutLz41).slice(1).toLowerCase();
   if (!TEXTURE_EXTENSIONS.has(ext)) {
     return null;
   }
-  return path.basename(filename, path.extname(filename)).toLowerCase();
+  return path.basename(withoutLz41, path.extname(withoutLz41)).toLowerCase();
 }
 
 /**
