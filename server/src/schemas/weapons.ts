@@ -6,8 +6,26 @@ import { TableSchema } from "./types";
  * fieldOrder below is a mechanical, in-source-order extraction of every top-level
  * `$Field:` literal read by `parse_weapon()` in `code/weapon/weapons.cpp` (live-fetched
  * from the FSO GitHub source, not the wiki or guessed) - the same treatment ships.tbl's
- * schema got. `+`-sigil sub-fields are omitted entirely since schemaValidator.ts never
- * order-checks them anyway.
+ * schema got.
+ *
+ * `+`/`@`-sigil fields are NOT omitted (an earlier version of this file omitted them
+ * categorically, on the reasoning that schemaValidator.ts never order-checks them
+ * anyway - see schemaValidator.ts:78, still true). That reasoning stopped being
+ * sufficient once fieldOrder ALSO became the data source for field-name completion
+ * (server.ts's `schemaFieldCompletions()`, triggered for `$`/`+`/`@` alike): a real
+ * field missing from fieldOrder is invisible to autocomplete even though it's
+ * perfectly valid to type, which is a real regression in usefulness (concretely, this
+ * is why `@Laser Bitmap:` didn't autocomplete - reported and fixed). So every `+`/`@`
+ * field read directly in `parse_weapon()`'s own top-level flow is now included here too,
+ * interleaved in true parse order alongside the `$` fields - EXCEPT fields only reachable
+ * inside another optional block that itself opens a distinct sub-entity (e.g. the
+ * homing-lock modifiers nested inside `$Homing:`'s heat/aspect branches, `$Trail:`'s
+ * `+Bitmap:`/`+Width:`/etc., `$BeamInfo:`'s enormous nested cluster, `$Countermeasure:`,
+ * `$Pspew:`, the `$Proximity Radius:`/`$MineInfo:` sub-fields, and similar) - those stay
+ * excluded exactly as before, since including them would offer them at the wrong nesting
+ * level and they were never order-checked or otherwise represented here regardless.
+ * `+nocreate`/`+remove` are also excluded: they're modular-table merge directives, not
+ * real per-entry data fields.
  *
  * Two earlier guessed entries, `Flash Impact Weapon Expl` and `HUD Target LOD`, were
  * CONFIRMED NOT TO EXIST anywhere in current weapons.cpp and have been removed - they
@@ -23,9 +41,10 @@ import { TableSchema } from "./types";
  * legacy fallback - it's real, not a typo, and is now in the schema.
  *
  * `Weapon Range` was previously listed as if a top-level `$` field; confirmed it's
- * actually `+Weapon Range:` (a sub-field, per a real mod file and live source
- * cross-check) and removed from this list, since `+`-sigil fields are never
- * order-checked here regardless.
+ * actually `+Weapon Range:` (a real mod file and live source cross-check). It's back in
+ * this list (along with `+Weapon Min Range:`/`+Weapon Optimum Range:`, its neighbors at
+ * weapons.cpp ~2114-2139) now that `+`/`@` fields are included for completion purposes -
+ * it's still never order-checked against, per schemaValidator.ts's `$`-only order logic.
  *
  * `Shockwave` (as a single block-opening field) does not exist; replaced with the real
  * flat `$Shockwave ...:`/`$Dinky shockwave:` field cluster.
@@ -39,8 +58,15 @@ export const weaponsSchema: TableSchema = {
     "Name",
     "Alt name",
     "Subtype",
+    "Title",
+    "Description",
+    "Tech Title",
+    "Tech Anim",
+    "Tech Description",
     "Turret Name",
     "Tech Model",
+    "Icon_closeup_pos",
+    "Icon_closeup_zoom",
     "Selection Effect",
     "FS2 effect grid color",
     "FS2 effect scanline color",
@@ -53,6 +79,27 @@ export const weaponsSchema: TableSchema = {
     "External Model File",
     "Submodel Rotation Speed",
     "Submodel Rotation Acceleration",
+    "Laser Bitmap",
+    "Laser Head-on Bitmap",
+    "Laser Glow",
+    "Laser Glow Head-on Bitmap",
+    "Laser Head-on Transition Angle",
+    "Laser Head-on Transition Rate",
+    "Laser Bitmap Color",
+    "Laser Color",
+    "Laser Color2",
+    "Laser Length",
+    "Multiply Laser Length By Frametime",
+    "Laser Length Multiplier over Lifetime Curve",
+    "Laser Head Radius",
+    "Laser Tail Radius",
+    "Laser Radius Multiplier over Lifetime Curve",
+    "Laser Glow Length Scale",
+    "Laser Glow Head Scale",
+    "Laser Glow Tail Scale",
+    "Laser Position Offset",
+    "Laser Min Pixel Size",
+    "Laser Opacity over Lifetime Curve",
     "Light color",
     "Light radius",
     "Light intensity",
@@ -101,6 +148,7 @@ export const weaponsSchema: TableSchema = {
     "Homing",
     "Homing Auto-Target Method",
     "Swarm",
+    "SwarmWait",
     "Acceleration Time",
     "Velocity Inherit",
     "Free Flight Time",
@@ -108,6 +156,7 @@ export const weaponsSchema: TableSchema = {
     "Free Flight Speed Factor",
     "Gravity Const",
     "PreLaunchSnd",
+    "PreLaunchSnd Min Interval",
     "LaunchSnd",
     "CockpitLaunchSnd",
     "ImpactSnd",
@@ -122,10 +171,14 @@ export const weaponsSchema: TableSchema = {
     "TrackingSnd",
     "LockedSnd",
     "InFlightSnd",
+    "Inflight sound type",
     "Model",
     "Rearm Rate",
     "Rearm Ammo Increment",
     "Disallow Support Rearm",
+    "Weapon Range",
+    "Weapon Min Range",
+    "Weapon Optimum Range",
     "Pierce Objects",
     "Flags",
     "Trail",

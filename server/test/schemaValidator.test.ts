@@ -186,3 +186,48 @@ test("intelSchema activates on a real, genuinely headerless intel.tbl (bare $Ent
   const diagnostics = validateAgainstSchema(sections, intelSchema, "error");
   assert.deepEqual(diagnostics, []);
 });
+
+test("does not flag weapons.tbl's @Laser Bitmap:/@Laser Glow: (or other +/@ fields newly added to fieldOrder for autocomplete) as unrecognized or misplaced (real laser-visual weapon shape)", () => {
+  // fieldOrder used to omit every +/@ field entirely (see weapons.ts's doc comment on why
+  // that stopped being safe once fieldOrder also drives completion). This confirms the
+  // laser-visual cluster is now recognized AND doesn't trip the order check.
+  const text = [
+    "#Primary Weapons",
+    "$Name: ML-16 Mercury",
+    "+Tech Title: XSTR(\"Mercury Laser Cannon\", -1)",
+    "+Tech Description:",
+    "XSTR(\"A rapid-firing laser cannon.\", -1)",
+    "$end_multi_text",
+    "@Laser Bitmap: laserglow01",
+    "@Laser Glow: laserglow01_glow",
+    "@Laser Color: 255, 0, 0",
+    "@Laser Length: 10.0",
+    "$Light color: 255, 0, 0",
+    "$Mass: 1.0",
+    "#End",
+  ].join("\n");
+
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, weaponsSchema, "error");
+  assert.deepEqual(diagnostics, []);
+});
+
+test("does not flag ships.tbl's +Tech Title:/+Cockpit offset: (newly added to fieldOrder for autocomplete) as unrecognized or misplaced (real tech-room/cockpit ship shape)", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Apollo",
+    "$Short name: Apollo",
+    "$Species: Terran",
+    "+Type: XSTR(\"Fighter\", -1)",
+    "+Tech Title: XSTR(\"GTF Apollo\", -1)",
+    "$Cockpit POF file: apollo_cockpit.pof",
+    "+Cockpit offset: 0.0, 0.0, 0.0",
+    "+Cockpit Sway Multiplier: 1.0",
+    "$POF file: fighter1.pof",
+    "#End",
+  ].join("\n");
+
+  const { sections } = parseTable(text);
+  const diagnostics = validateAgainstSchema(sections, shipsSchema, "error");
+  assert.deepEqual(diagnostics, []);
+});

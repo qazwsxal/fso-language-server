@@ -71,6 +71,29 @@ import { TableSchema } from "./types";
  * per-thruster-point `$Trail:` block), and the `Thruster Bitmap 1/1a/2/2a/3/3a`/
  * `Thruster01 Radius factor`/`Thruster02 Length factor`/`Thruster Bitmap Distortion[ a]`
  * cluster (ship.cpp:4617-4692).
+ *
+ * A further pass (weapons.tbl's `@Laser Bitmap:` autocomplete regression fix) audited
+ * `parse_ship()`/`parse_ship_values()` in `code/ship/ship.cpp` for the same category of
+ * bug: fieldOrder now ALSO drives field-name completion (server.ts's
+ * `schemaFieldCompletions()`), so a real `+`/`@` field this list never listed was
+ * invisible to autocomplete even though `schemaValidator.ts` never order-checked it
+ * either way. Added, all confirmed directly against source and interleaved at their
+ * true parse position: `Use Template`/`Use Ship as Template` (ship.cpp:2011/2031, right
+ * after `$Name:`), the tech-room fluff-text cluster `Type`/`Maneuverability`/`Armor`/
+ * `Manufacturer`/`Description`/`Tech Title`/`Tech Description`/`Length`/`Gun Mounts`/
+ * `Missile Banks` (ship.cpp:2746-2784, between `$Species:` and `$Selection Effect:` -
+ * `Armor` here is the same purely-cosmetic string covered in this file's own note above,
+ * now included since it's a real field regardless of its lack of armor.tbl relation),
+ * `Cockpit offset`/`Cockpit Sway Multiplier` (ship.cpp:2878/2883, between `$Cockpit POF
+ * file:` and `$POF file:`), `Primary Bank Autoaim FOV` (ship.cpp:3461, between
+ * `$Autoaim FOV:` and `$Convergence:`), and `Shield Regen Hit Delay` (ship.cpp:3946,
+ * right after `$Shield Regeneration Rate:`). `+nocreate`/`+remove`/`+noreplace` were
+ * deliberately left out (modular-table merge directives, not per-entry data fields), as
+ * were every other `+`/`@` field found nested inside a distinct sub-entity block (the
+ * `$Cockpit Display:`/`$Autoaim FOV:`'s convergence sub-fields/`$Convergence:`/`$Aims at
+ * Flight Cursor:`/weapon-bank/thruster/particle-effect clusters and similar) - those stay
+ * excluded exactly as before per this schema's own `nestedScopeStartField`-adjacent
+ * precedent of only tracking genuinely top-level fields here.
  */
 export const shipsSchema: TableSchema = {
   name: "ships.tbl",
@@ -79,9 +102,21 @@ export const shipsSchema: TableSchema = {
   entryKeyField: "Name",
   fieldOrder: [
     "Name",
+    "Use Template",
+    "Use Ship as Template",
     "Alt name",
     "Short name",
     "Species",
+    "Type",
+    "Maneuverability",
+    "Armor",
+    "Manufacturer",
+    "Description",
+    "Tech Title",
+    "Tech Description",
+    "Length",
+    "Gun Mounts",
+    "Missile Banks",
     "Selection Effect",
     "FS2 effect grid color",
     "FS2 effect scanline color",
@@ -89,6 +124,8 @@ export const shipsSchema: TableSchema = {
     "FS2 effect wireframe color",
     "HUD Gauge Configs",
     "Cockpit POF file",
+    "Cockpit offset",
+    "Cockpit Sway Multiplier",
     "POF file",
     "POF file Techroom",
     "Texture Replace",
@@ -124,6 +161,7 @@ export const shipsSchema: TableSchema = {
     "Glide",
     "Use Newtonian Dampening",
     "Autoaim FOV",
+    "Primary Bank Autoaim FOV",
     "Convergence",
     "Warpin type",
     "Warpin Start Sound",
@@ -200,6 +238,7 @@ export const shipsSchema: TableSchema = {
     "Shield Color",
     "Power Output",
     "Shield Regeneration Rate",
+    "Shield Regen Hit Delay",
     "Weapon Regeneration Rate",
     "Max Oclk Speed",
     "Max Weapon Eng",
