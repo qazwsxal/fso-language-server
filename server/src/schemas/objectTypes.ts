@@ -20,5 +20,5 @@ export const objectTypesSchema: TableSchema = {
   fileMatch: [/(^|[\\/])objecttypes\.tbl$/i, /-obt\.tbm$/i],
   sectionNames: ["Target Priorities", "Ship Types"],
   entryKeyField: "Name",
-  fieldOrder: ["Name", "Target Priority Groups"],
+  fieldOrder: ["Name", "Target Priority Groups", "Turrets prioritize ship target"],
 };

@@ -22,5 +22,5 @@ export const mainhallSchema: TableSchema = {
   fileMatch: [/(^|[\\/])mainhall\.tbl$/i, /-hall\.tbm$/i],
   sectionNames: ["Main Halls", LOOSE_SECTION_NAME],
   entryKeyField: "Main Hall",
-  fieldOrder: ["Main Hall", "Bitmap", "Mask", "Music"],
+  fieldOrder: ["Num Resolutions", "Main Hall", "Bitmap", "Mask", "Music"],
 };

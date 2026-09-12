@@ -32,6 +32,19 @@ export interface TableSchema {
    */
   fieldOrder: string[];
   /**
+   * Fields that are real and recognized for this table, but whose relative position
+   * can't be checked because the real parser genuinely accepts them in any order -
+   * confirmed for ai_profiles.tbl, whose own source comment says so directly
+   * (`ai_profiles.cpp`: "fill in any and all settings; they're all optional and can be
+   * in any order", implemented via a retry loop that re-scans for the next matching
+   * field rather than a single sequential pass). Listing these in `fieldOrder` instead
+   * would silence "unrecognized field" noise at the cost of introducing false "out of
+   * order" noise for any real file that (validly) uses a different order - worse than
+   * the problem it fixes. A field here is still recognized for unknown-field purposes
+   * and still counts toward cross-schema ownership, it just never gets an order index.
+   */
+  unorderedFields?: string[];
+  /**
    * A field (e.g. ships.tbl's "Subsystem") that opens a nested per-block scope in which
    * field names can legitimately repeat with a different, block-local meaning (a
    * turret's own `$Flags:`/`$Armor Type:`/`$Default PBanks:`, distinct from the ship's

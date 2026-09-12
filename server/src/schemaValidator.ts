@@ -16,7 +16,8 @@ export type UnknownFieldSeverity = "off" | Severity;
 const knownFieldOwners: Map<string, Set<string>> = (() => {
   const owners = new Map<string, Set<string>>();
   for (const schema of allSchemas) {
-    for (const key of new Set(schema.fieldOrder.map(normalize))) {
+    const allKeys = [...schema.fieldOrder, ...(schema.unorderedFields ?? [])];
+    for (const key of new Set(allKeys.map(normalize))) {
       const set = owners.get(key) ?? new Set<string>();
       set.add(schema.name);
       owners.set(key, set);
@@ -48,6 +49,7 @@ export function validateAgainstSchema(
   const diagnostics: ParseDiagnostic[] = [];
   const orderIndex = new Map<string, number>();
   schema.fieldOrder.forEach((key, i) => orderIndex.set(normalize(key), i));
+  const unorderedKeys = new Set((schema.unorderedFields ?? []).map(normalize));
 
   for (const section of sections) {
     if (!schema.sectionNames.some((n) => normalize(n) === normalize(section.name))) {
@@ -96,6 +98,13 @@ export function validateAgainstSchema(
 
       if (nestedScopeKey && normalize(entry.key) === nestedScopeKey) {
         inNestedScope = true;
+      }
+
+      if (unorderedKeys.has(normalize(entry.key))) {
+        // Recognized by this schema, but deliberately not order-checked (see
+        // TableSchema.unorderedFields's doc comment) - not flagged either way, and
+        // doesn't touch lastIndex/lastKey since it carries no position of its own.
+        continue;
       }
 
       const idx = orderIndex.get(normalize(entry.key));

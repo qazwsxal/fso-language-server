@@ -8,6 +8,41 @@ Many more ships.tbl/weapons.tbl cross-references, plus three previously-unsuppor
 tables that back some of them - all ground-truthed directly against the FSO C++ source
 rather than guessed:
 
+- New `fsoLsp.unknownFieldSeverity` setting (`"off"` by default): reports a `$Field:` this
+  extension doesn't recognize for the table it's in. Making this setting worth turning on
+  required comprehensively expanding several schemas first - a real Blue Planet Complete
+  install with it on originally produced ~1800 diagnostics, almost all noise from
+  incomplete field lists rather than real typos:
+  - `ships.tbl`'s field list grew from ~60 to ~150 entries, mechanically extracted in
+    real parse order directly from `ship.cpp` - every ship-level sound field
+    (`$EngineSnd:` through `$SubsysExplosionSnd:`), the full `$Warpin `/`$Warpout ` field
+    cluster, `$Radar Image 2D:`, `$Glowpoint overrides:`, the `$Thruster Bitmap ...`
+    cluster, shield/weapon/hull/subsystem regeneration and repair rates, and more - see
+    [server/src/schemas/ships.ts](server/src/schemas/ships.ts) for the full accounting.
+    This pass also fixed a latent relative-order bug: `$Trail:`/`$Thruster:` actually
+    parse before `$Ship IFF Colors:`/`$Target Priority Groups:`, the reverse of what the
+    schema previously said (never triggered by a real file yet, but would have).
+  - `weapons.tbl` gained `$Light color:`/`$Light radius:`/`$Light intensity:`.
+  - `ai.tbl`'s field list grew from 4 to the full ~50-field set read by
+    `parse_ai_class()`, mechanically extracted from `aicode.cpp` in call order.
+  - `ai_profiles.tbl` gained a new kind of schema field, `unorderedFields`: this table's
+    own source comment says its ~180 tuning fields "can be in any order" (a retry-loop
+    parser, not a straight sequential one like ships.tbl's), so listing them in the
+    order-checked `fieldOrder` would have traded "unrecognized field" noise for "out of
+    order" noise on the same real files. `unorderedFields` fields are recognized (and
+    count toward cross-schema ownership) without ever being order-checked.
+  - `sounds.tbl` gained `$Template:` (Sound Environments entries), `iff_defs.tbl` gained
+    the global `$Traitor IFF:` field, `objecttypes.tbl` gained
+    `$Turrets prioritize ship target:`, and `mainhall.tbl` gained the global
+    `$Num Resolutions:` field.
+  - `cutscenes.tbl` was actually keyed on `$Name:` instead of the real `$Filename:` (the
+    same "wrong entryKeyField silently validates nothing" bug found elsewhere in this
+    project) - fixed, and gained `$cd:`/`$Always Viewable:`/`$Never Viewable:`/
+    `$Custom data:`.
+  - After all of the above, the same real Blue Planet Complete install's
+    `unknownFieldSeverity` diagnostic count dropped from ~1800 to 44 - matching exactly
+    the 44 genuine, independently-verified content issues already known from the
+    `"wholeMod"` validation pass below, i.e. zero schema-driven false positives left.
 - New `fsoLsp.validationScope` setting: `"openFiles"` (default, unchanged) validates only
   documents you have open; `"wholeMod"` also scans every loose `.tbl`/`.tbm` file across
   the active mod's search path, so cross-reference problems show up in the Problems panel
