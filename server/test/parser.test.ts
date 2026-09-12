@@ -438,3 +438,71 @@ test("does not strip quotes from a parenthesized list value, or from a value tha
   assert.equal(result.sections[0].entries[0].value, '( "player allowed" "in tech database" )');
   assert.equal(result.sections[0].entries[1].value, 'XSTR( "Some text", -1 )');
 });
+
+test("autoCloseSectionsOnNextSection: a section is closed silently by the next #Section header, no explicit #End needed (real messages.tbl #Personas/#Messages shape)", () => {
+  const text = [
+    "#Personas",
+    "$Persona: Terran Command",
+    "+Flags: ( \"Wingman\" )",
+    "#Messages",
+    "$Name: M01",
+    "$Message: XSTR(\"Hello\", -1)",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text, { autoCloseSectionsOnNextSection: true });
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(result.sections.length, 2);
+  assert.equal(result.sections[0].name, "Personas");
+  assert.equal(result.sections[0].endLine, 2);
+  assert.equal(result.sections[1].name, "Messages");
+  assert.equal(result.sections[1].endLine, 6);
+});
+
+test("autoCloseSectionsOnNextSection: the very LAST section still needs a real #End (only the boundary BETWEEN sections is implicit)", () => {
+  const text = ["#Personas", "$Persona: Terran Command", "#Messages", "$Name: M01"].join("\n");
+  const result = parseTable(text, { autoCloseSectionsOnNextSection: true });
+  assert.equal(result.diagnostics.length, 1);
+  assert.match(result.diagnostics[0].message, /Messages.*was never closed with #End/);
+});
+
+test("without autoCloseSectionsOnNextSection (the default), the same file reports the earlier section as not closed - confirms the option isn't accidentally on for every table", () => {
+  const text = ["#Personas", "$Persona: Terran Command", "#Messages", "$Name: M01", "#End"].join("\n");
+  const result = parseTable(text);
+  assert.equal(result.diagnostics.length, 1);
+  assert.match(result.diagnostics[0].message, /Personas.*was not closed with #End before the next section started/);
+});
+
+test("tolerateUnclosedSectionAtEof: a section still open when the file ends is not reported at all (real traitor.tbl shape: neither section ever closes, not even the last one)", () => {
+  const text = [
+    "#Debriefing_info",
+    "$Voice: bta_trtr_db.ogg",
+    "#Traitor Overrides",
+    "$Name: Admiral Po",
+    "$Voice Filename: 100_bta_trtr_db.ogg",
+  ].join("\n");
+  const result = parseTable(text, { autoCloseSectionsOnNextSection: true, tolerateUnclosedSectionAtEof: true });
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test("recognizes traitor.tbl's $Multi text:/$Recommendation text: as multi-line fields, not their XSTR content as unrecognized lines (real Between the Ashes traitor.tbl shape)", () => {
+  const text = [
+    "#Debriefing_info",
+    "$Multi text:",
+    '   XSTR("Some long debriefing text.", 1548)',
+    "$end_multi_text",
+    "$Voice: bta_trtr_db.ogg",
+    "$Recommendation text:",
+    '   XSTR("Friendly ships are not valid targets.", 1549)',
+    "$end_multi_text",
+    "#Traitor Overrides",
+    "$Name: Admiral Po",
+    '$Text: XSTR("Some long override text.", 1548)',
+    "$end_multi_text",
+    "$Voice Filename: 100_bta_trtr_db.ogg",
+    "$Recommendation text:",
+    '   XSTR("Friendly ships are not valid targets.", 1549)',
+    "$end_multi_text",
+  ].join("\n");
+  const result = parseTable(text, { autoCloseSectionsOnNextSection: true, tolerateUnclosedSectionAtEof: true });
+  assert.deepEqual(result.diagnostics, []);
+});

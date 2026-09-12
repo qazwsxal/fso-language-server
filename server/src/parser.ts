@@ -77,9 +77,55 @@ const MULTILINE_END_MARKERS = new Set(["$end_multi_text", "$end_custom_data"]);
  * `$end_multi_text` - silently eating real data. Scoping to known multitext fields only
  * avoids that failure mode.
  */
-const MULTITEXT_FIELDS = new Set(["description", "tech description", "promotion text"]);
+const MULTITEXT_FIELDS = new Set([
+  "description",
+  "tech description",
+  "promotion text",
+  // traitor.tbl (`code/stats/scoring.cpp`'s `parse_traitor_tbl()`) - confirmed real,
+  // both `stuff_string(..., F_MULTITEXT)`. `$Text:` (also real there) isn't listed: a
+  // real Between the Ashes traitor.tbl always puts its value inline on the same line,
+  // which the sentinel-adjacency check just below this list already handles correctly
+  // without needing a MULTITEXT_FIELDS entry.
+  "multi text",
+  "recommendation text",
+]);
 
-export function parseTable(text: string): ParseResult {
+export interface ParseTableOptions {
+  /**
+   * A real, if uncommon, FSO section shape: instead of requiring an explicit `#End` (or
+   * table-specific close token) before the next `#Section` header, a section from a
+   * table with this option is considered closed the instant ANY new `#Section` header
+   * appears - confirmed directly against source for every table that actually needs
+   * this (game_settings.tbl's bare `#GAME SETTINGS`/`#CAMPAIGN SETTINGS`/etc. dividers;
+   * messages.tbl's `#Personas`, closed by EITHER `#End` OR `#Messages` starting;
+   * post_processing.tbl's `#Effects`/`#Ship Effects`; a real Between the Ashes SCPUI
+   * `ui.tbl`/nodemap.tbl/`*-smap.tbm` family; `code/prop/prop.cpp`'s optional `#PROP
+   * CATEGORIES` section; and `code/stats/scoring.cpp`'s `parse_traitor_tbl()`, whose two
+   * sections just fall from one `if` block into the next with nothing between them at
+   * all). Without this, every one of those tables' real files falsely reports its
+   * next-to-last section (or, for traitor.tbl, both) as "not closed with #End before the
+   * next section started" - a real structural quirk, not a mistake in the file. Whether
+   * a given file's table actually works this way is filename-based, decided by the
+   * caller (see server.ts's `isImplicitSectionCloseFile()`), since nothing in a
+   * section's own name or content distinguishes it from a table that genuinely forgot
+   * its `#End`.
+   */
+  autoCloseSectionsOnNextSection?: boolean;
+  /**
+   * Whether a section still open when the file ends is tolerated silently instead of
+   * reported as "never closed with #End". Independent of
+   * `autoCloseSectionsOnNextSection` above: most tables with THAT option still require a
+   * real `#End` on their very last section (confirmed for game_settings.tbl/
+   * messages.tbl/post_processing.tbl/ui.tbl/nodemap.tbl/`*-smap.tbm`/props.tbl) - this
+   * is only for the rarer case (confirmed only for traitor.tbl) where NEITHER section
+   * ever needs a close token, not even the last one, so reaching EOF with one still
+   * "open" is completely normal.
+   */
+  tolerateUnclosedSectionAtEof?: boolean;
+}
+
+export function parseTable(text: string, options: ParseTableOptions = {}): ParseResult {
+  const { autoCloseSectionsOnNextSection = false, tolerateUnclosedSectionAtEof = false } = options;
   // A leading UTF-8 BOM (U+FEFF - common in files saved by Windows editors like
   // Notepad) isn't stripped by VSCode's document text and isn't a real table
   // character. Left in place, it hides the FIRST line's leading "#"/"$"/"+"/"@" sigil
@@ -137,13 +183,17 @@ export function parseTable(text: string): ParseResult {
         });
       } else {
         if (currentSection) {
-          diagnostics.push({
-            line: currentSection.startLine,
-            startCol: 0,
-            endCol: (lines[currentSection.startLine] || "").length,
-            message: `Section "${currentSection.name}" was not closed with #End before the next section started`,
-            severity: "error",
-          });
+          if (autoCloseSectionsOnNextSection) {
+            currentSection.endLine = i - 1;
+          } else {
+            diagnostics.push({
+              line: currentSection.startLine,
+              startCol: 0,
+              endCol: (lines[currentSection.startLine] || "").length,
+              message: `Section "${currentSection.name}" was not closed with #End before the next section started`,
+              severity: "error",
+            });
+          }
         }
         const name = line.slice(1).trim();
         currentSection = { name, startLine: i, endLine: null, entries: [] };
@@ -376,7 +426,7 @@ export function parseTable(text: string): ParseResult {
     });
   }
 
-  if (currentSection) {
+  if (currentSection && !tolerateUnclosedSectionAtEof) {
     diagnostics.push({
       line: currentSection.startLine,
       startCol: 0,
