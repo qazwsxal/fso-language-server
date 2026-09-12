@@ -3158,7 +3158,15 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
     }
   }
 
-  if (/^\s*\$\S*$/.test(linePrefix)) {
+  if (/^\s*[$+@]\S*$/.test(linePrefix)) {
+    // A schema's fieldOrder is a flat, sigil-agnostic list (see TableSchema's doc
+    // comment - `+Subfield` entries aren't tracked separately from top-level `$Field`
+    // ones at all), and schemaFieldCompletions()'s insertText never hardcodes a sigil of
+    // its own - it just fills in "Name: " after whatever sigil the user already typed.
+    // Offering the same list regardless of which of $/+/@ triggered this is therefore
+    // strictly better than the old $-only trigger (typing "+" or "@" got zero
+    // suggestions before), even though it can't yet tell a real "+Subfield" apart from a
+    // top-level "$Field" within that list.
     const schema = findSchemaForFile(params.textDocument.uri);
     if (schema) {
       return schemaFieldCompletions(schema.fieldOrder);
