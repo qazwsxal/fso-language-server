@@ -22,6 +22,10 @@ import {
   DefinitionParams,
   DeclarationParams,
   Position,
+  CodeAction,
+  CodeActionParams,
+  CodeActionKind,
+  TextEdit,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { parseTable, ParseResult, ParseDiagnostic, TableSection, LOOSE_SECTION_NAME } from "./parser";
@@ -400,6 +404,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
       completionProvider: { triggerCharacters: ["$", "+", "@", "#"] },
+      codeActionProvider: true,
       hoverProvider: true,
       documentSymbolProvider: true,
       definitionProvider: true,
@@ -2710,12 +2715,78 @@ function computeSoundDiagnostics(documentUri: string, ships: ShipEntryInfo[], we
   return diagnostics;
 }
 
-/** Every known field name (with sigil) for a table schema, used to drive field-name completion. */
-function schemaFieldCompletions(schemaFieldOrder: string[]): CompletionItem[] {
+/**
+ * Every known field name (with sigil) for a table schema, used to drive field-name
+ * completion. `range` must span from just after the sigil ($/+/@) to the cursor - the client's
+ * language-configuration.json `wordPattern` deliberately includes `$`/`+`/`@` as word
+ * characters (needed elsewhere, to treat a multi-word bare list token like `player
+ * allowed` as one atomic word for OTHER completions' filtering), so without an explicit
+ * `textEdit`, VSCode's default word-range at the cursor is e.g. "$Mas" - including the
+ * sigil this project's own `label`/`insertText` never include. That mismatch means
+ * VSCode's client-side filtering compares "$Mas" against a label like "Mass:" and finds
+ * no match at all, silently showing NOTHING (confirmed: a real bp-wep.tbm's `$Mass:`
+ * never completed) even though the server's response looks completely correct when
+ * inspected directly over the LSP wire, since the raw JSON-RPC response doesn't go
+ * through the client's own word-range/filter step at all - a real gap in how this
+ * project had been verifying completion features up to this point.
+ */
+/**
+ * Whether `line` falls inside the current entry's nested scope (e.g. past a ship's
+ * first `$Subsystem:` line) for `schema` - `schema.fieldOrder` is a purely top-level
+ * field list (see TableSchema's `nestedScopeStartField` doc comment: schemaValidator.ts
+ * itself stops order-checking once this field is seen, precisely because field names can
+ * legitimately repeat with a different, block-local meaning past that point), so
+ * offering it as field-NAME completion once inside that scope would suggest fields that
+ * don't apply there at all (a real turret block wants things like its own
+ * `$Default PBanks:`/`$Armor Type:`, or subsystem-only fields this schema doesn't track
+ * as a separate list anywhere) - actively wrong, not just incomplete, so this is used to
+ * suppress the top-level list entirely rather than guess a nested one this project has
+ * no real confidence in.
+ */
+function isCursorInsideNestedScope(uri: string, schema: TableSchema, line: number): boolean {
+  if (!schema.nestedScopeStartField) {
+    return false;
+  }
+  const result = parsedByUri.get(uri);
+  if (!result) {
+    return false;
+  }
+  const section = result.sections.find(
+    (s) =>
+      schema.sectionNames.some((n) => n.toLowerCase() === s.name.toLowerCase()) &&
+      s.startLine <= line &&
+      (s.endLine === null || line <= s.endLine),
+  );
+  if (!section) {
+    return false;
+  }
+  const entryKey = schema.entryKeyField.toLowerCase();
+  const nestedKey = schema.nestedScopeStartField.toLowerCase();
+  let currentEntryStarted = false;
+  let insideNestedScope = false;
+  for (const entry of section.entries) {
+    if (entry.line > line) {
+      break;
+    }
+    if (entry.sigil !== "$") {
+      continue;
+    }
+    const key = entry.key.toLowerCase();
+    if (key === entryKey) {
+      currentEntryStarted = true;
+      insideNestedScope = false;
+    } else if (currentEntryStarted && key === nestedKey) {
+      insideNestedScope = true;
+    }
+  }
+  return insideNestedScope;
+}
+
+function schemaFieldCompletions(schemaFieldOrder: string[], range: Range): CompletionItem[] {
   return schemaFieldOrder.map((field) => ({
     label: `${field}:`,
     kind: CompletionItemKind.Field,
-    insertText: `${field}: `,
+    textEdit: { range, newText: `${field}: ` },
   }));
 }
 
@@ -3158,18 +3229,23 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
     }
   }
 
-  if (/^\s*[$+@]\S*$/.test(linePrefix)) {
+  const fieldNameMatch = /^\s*[$+@](\S*)$/.exec(linePrefix);
+  if (fieldNameMatch) {
     // A schema's fieldOrder is a flat, sigil-agnostic list (see TableSchema's doc
     // comment - `+Subfield` entries aren't tracked separately from top-level `$Field`
-    // ones at all), and schemaFieldCompletions()'s insertText never hardcodes a sigil of
+    // ones at all), and schemaFieldCompletions()'s newText never hardcodes a sigil of
     // its own - it just fills in "Name: " after whatever sigil the user already typed.
     // Offering the same list regardless of which of $/+/@ triggered this is therefore
     // strictly better than the old $-only trigger (typing "+" or "@" got zero
     // suggestions before), even though it can't yet tell a real "+Subfield" apart from a
     // top-level "$Field" within that list.
     const schema = findSchemaForFile(params.textDocument.uri);
-    if (schema) {
-      return schemaFieldCompletions(schema.fieldOrder);
+    if (schema && !isCursorInsideNestedScope(params.textDocument.uri, schema, params.position.line)) {
+      const range: Range = {
+        start: { line: params.position.line, character: params.position.character - fieldNameMatch[1].length },
+        end: params.position,
+      };
+      return schemaFieldCompletions(schema.fieldOrder, range);
     }
   }
 
@@ -3181,6 +3257,123 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
     { label: "+nocreate", kind: CompletionItemKind.Keyword, detail: "Modular table: only modify if the entry already exists" },
     { label: "+remove", kind: CompletionItemKind.Keyword, detail: "Modular table: delete a previously parsed entry" },
   ];
+});
+
+/** Matches schemaValidator.ts's exact "out of order" message, capturing the misplaced field, the field it should come at/after, and the enclosing entry's name. */
+const OUT_OF_ORDER_MESSAGE = /^"\$(.+)" is out of the expected field order for .+? \(expected at\/after "\$(.+)"\) in entry ".+"$/;
+
+/**
+ * The full line range a `$`-sigil entry's OWN field-plus-value occupies (see
+ * FieldEntry's `endLine` doc comment) EXTENDED to also cover any immediately-following
+ * `+`/`@`-sigil sub-fields, up to (not including) the next `$`-sigil entry or the end of
+ * the section - those sub-fields are positionally bound to the preceding `$Field:` in
+ * real FSO grammar (e.g. `$Trail:`'s `+Bitmap:`/`+Start Width:` etc.), so moving the
+ * `$Field:` without them would silently detach real data from it.
+ */
+function fieldBlockRange(section: TableSection, entryIndex: number): { startLine: number; endLine: number } {
+  const entry = section.entries[entryIndex];
+  let endLine = entry.endLine;
+  for (let i = entryIndex + 1; i < section.entries.length; i++) {
+    if (section.entries[i].sigil === "$") {
+      break;
+    }
+    endLine = section.entries[i].endLine;
+  }
+  return { startLine: entry.line, endLine };
+}
+
+connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) {
+    return [];
+  }
+  const schema = findSchemaForFile(params.textDocument.uri);
+  const parsed = parsedByUri.get(params.textDocument.uri);
+  if (!schema || !parsed) {
+    return [];
+  }
+
+  const actions: CodeAction[] = [];
+
+  for (const diagnostic of params.context.diagnostics) {
+    const match = OUT_OF_ORDER_MESSAGE.exec(diagnostic.message);
+    if (!match) {
+      continue;
+    }
+    const [, misplacedKey, targetKey] = match;
+
+    const section = parsed.sections.find(
+      (s) =>
+        schema.sectionNames.some((n) => n.toLowerCase() === s.name.toLowerCase()) &&
+        s.startLine <= diagnostic.range.start.line &&
+        (s.endLine === null || diagnostic.range.start.line <= s.endLine),
+    );
+    if (!section) {
+      continue;
+    }
+
+    const misplacedIndex = section.entries.findIndex(
+      (e) => e.sigil === "$" && e.line === diagnostic.range.start.line && e.key.toLowerCase() === misplacedKey.toLowerCase(),
+    );
+    if (misplacedIndex === -1) {
+      continue;
+    }
+
+    // The target ($lastKey) must be the occurrence WITHIN THE SAME logical entry (the
+    // same $Name:-to-$Name: span) as the misplaced field, and it must appear before it -
+    // schemaValidator.ts only ever sets lastKey from a field it already accepted while
+    // scanning forward through this same entry, so an earlier occurrence in a
+    // DIFFERENT entry (a different ship/weapon) is never the right target.
+    const entryKeyNormalized = schema.entryKeyField.toLowerCase();
+    let entryStartIndex = 0;
+    for (let i = misplacedIndex - 1; i >= 0; i--) {
+      if (section.entries[i].sigil === "$" && section.entries[i].key.toLowerCase() === entryKeyNormalized) {
+        entryStartIndex = i;
+        break;
+      }
+    }
+    let targetIndex = -1;
+    for (let i = misplacedIndex - 1; i >= entryStartIndex; i--) {
+      if (section.entries[i].sigil === "$" && section.entries[i].key.toLowerCase() === targetKey.toLowerCase()) {
+        targetIndex = i;
+        break;
+      }
+    }
+    if (targetIndex === -1) {
+      continue;
+    }
+
+    const misplacedBlock = fieldBlockRange(section, misplacedIndex);
+    const targetBlock = fieldBlockRange(section, targetIndex);
+    if (misplacedBlock.startLine <= targetBlock.endLine) {
+      // Should be impossible given targetIndex < misplacedIndex, but guard against
+      // overlapping edits rather than ever proposing a corrupting one.
+      continue;
+    }
+
+    const blockText = doc.getText({
+      start: { line: misplacedBlock.startLine, character: 0 },
+      end: { line: misplacedBlock.endLine + 1, character: 0 },
+    });
+
+    const deleteEdit: TextEdit = {
+      range: { start: { line: misplacedBlock.startLine, character: 0 }, end: { line: misplacedBlock.endLine + 1, character: 0 } },
+      newText: "",
+    };
+    const insertEdit: TextEdit = {
+      range: { start: { line: targetBlock.startLine, character: 0 }, end: { line: targetBlock.startLine, character: 0 } },
+      newText: blockText,
+    };
+
+    actions.push({
+      title: `Move "$${misplacedKey}" to before "$${targetKey}"`,
+      kind: CodeActionKind.QuickFix,
+      diagnostics: [diagnostic],
+      edit: { changes: { [params.textDocument.uri]: [deleteEdit, insertEdit] } },
+    });
+  }
+
+  return actions;
 });
 
 const SHIP_TEXTURE_FIELD_KEYS = new Set([
