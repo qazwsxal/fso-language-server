@@ -36,11 +36,15 @@ export interface MissionEntryInfo {
  * into one MissionNameRef per quoted name, each carrying its own real source line.
  */
 function extractNameRefs(field: FieldEntry): MissionNameRef[] {
+  // `field.line` is the entry's own first line (parser.ts's FieldEntry doc comment) -
+  // previously this recomputed it as `field.line - (physicalLines.length - 1)` to work
+  // around parseTable() itself pointing `.line` at the LAST consumed line for a
+  // multi-line value; now that that's fixed at the source, `field.line` is already the
+  // right anchor and no reverse computation is needed.
   const physicalLines = field.value.split("\n");
-  const firstLine = field.line - (physicalLines.length - 1);
   const refs: MissionNameRef[] = [];
   physicalLines.forEach((lineText, idx) => {
-    const lineNumber = firstLine + idx;
+    const lineNumber = field.line + idx;
     for (const m of lineText.matchAll(/"([^"]*)"/g)) {
       refs.push({ line: lineNumber, name: m[1].trim() });
     }

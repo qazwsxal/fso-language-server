@@ -166,6 +166,56 @@ test("continues a parenthesized list value across lines with a balanced-quote op
     '( "player allowed"\n' + '    "Spawn Cluster Baby#bomber,25"    \n' + '    "Remote Detonate" )    ',
   );
   assert.equal(result.diagnostics.filter((d) => /Unrecognized line/.test(d.message)).length, 0);
+  // `line` must point at the field's own "$Flags:" line (2), NOT the last line its value
+  // consumes (4, the closing ")") - a real, previously-undiscovered bug where every
+  // multi-line-value branch reassigned the loop's `i` before the entry was pushed, so
+  // `line: i` captured the wrong end of the span. `endLine` is the new field that
+  // exposes the true last-consumed line, for anything (e.g. a "move this field" quick
+  // fix) that needs the whole span rather than just where it starts.
+  assert.equal(flags!.line, 2);
+  assert.equal(flags!.endLine, 4);
+});
+
+test("a single-line field's line and endLine are the same", () => {
+  const text = ["#Armor Type", "$Name: Light Armor", "#End"].join("\n");
+  const result = parseTable(text);
+  const nameEntry = result.sections[0].entries[0];
+  assert.equal(nameEntry.line, 1);
+  assert.equal(nameEntry.endLine, 1);
+});
+
+test("a Lua chunk field's endLine is its real closing bracket's line, not its opening line", () => {
+  const text = [
+    "#Conditional Hooks",
+    "$On Key Pressed: [",
+    "  if mn.getMissionTime() >= 1 then",
+    "    AbsoluteKeys.add(hv.Key)",
+    "  end",
+    "]",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text);
+  const entry = result.sections[0].entries.find((e) => e.key === "On Key Pressed");
+  assert.ok(entry);
+  assert.equal(entry!.line, 1);
+  assert.equal(entry!.endLine, 5);
+});
+
+test("a multitext field's endLine includes the consumed $end_multi_text sentinel line", () => {
+  const text = [
+    "#Ship Classes",
+    "$Name: GTF Ulysses",
+    "+Description:",
+    "A sturdy fighter.",
+    "Built for combat.",
+    "$end_multi_text",
+    "#End",
+  ].join("\n");
+  const result = parseTable(text);
+  const entry = result.sections[0].entries.find((e) => e.key === "Description");
+  assert.ok(entry);
+  assert.equal(entry!.line, 2);
+  assert.equal(entry!.endLine, 5);
 });
 
 test("continues a parenthesized list value across many lines even with zero quotes (real bp-wep.tbm $Player Weapon Precedence: shape)", () => {

@@ -26,7 +26,10 @@ export interface FieldEntry {
   sigil: "$" | "+" | "@";
   key: string;
   value: string;
+  /** The line this field's own sigil/key/colon appears on - always the FIRST line of the entry, even when `value` spans multiple lines (a continued parenthesized list, a Lua chunk, a multitext block, ...). */
   line: number;
+  /** The last line this entry's own value consumes - equal to `line` for an ordinary single-line field, or greater for any of the multi-line value shapes parseTable() recognizes. Lets a caller (e.g. a "reorder this field" code action) know the entry's full span without re-deriving it from `value`'s own newline count, which wouldn't account for a consumed trailing `$end_multi_text`/`$end_custom_data` sentinel line. */
+  endLine: number;
   raw: string;
 }
 
@@ -261,6 +264,15 @@ export function parseTable(text: string, options: ParseTableOptions = {}): Parse
     }
 
     if (line.startsWith("$") || line.startsWith("+") || line.startsWith("@")) {
+      // Captured BEFORE any of the multi-line-value branches below reassign `i` to the
+      // LAST line they consume - confirmed as a real, previously-undiscovered bug: every
+      // multi-line field (a continued `$Flags: ( ... )` list, a Lua chunk, a multitext
+      // block, ...) was pushing `line: i` using the ALREADY-ADVANCED `i`, so `entry.line`
+      // pointed at the field's last line instead of where its own sigil/key/colon
+      // actually appears - wrong for any diagnostic, hover, or go-to-definition target
+      // keyed on that field. No existing test asserted `.line` for a multi-line field,
+      // which is how this went unnoticed.
+      const startLine = i;
       const sigil = line[0] as "$" | "+" | "@";
       const colonIdx = line.indexOf(":");
       let key: string;
@@ -476,11 +488,11 @@ export function parseTable(text: string, options: ParseTableOptions = {}): Parse
           looseSection = { name: LOOSE_SECTION_NAME, startLine: i, endLine: null, entries: [] };
           sections.push(looseSection);
         }
-        looseSection.entries.push({ sigil, key, value: entryValue, line: i, raw: rawLine });
+        looseSection.entries.push({ sigil, key, value: entryValue, line: startLine, endLine: i, raw: rawLine });
         continue;
       }
 
-      currentSection.entries.push({ sigil, key, value: entryValue, line: i, raw: rawLine });
+      currentSection.entries.push({ sigil, key, value: entryValue, line: startLine, endLine: i, raw: rawLine });
       continue;
     }
 
